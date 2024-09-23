@@ -1,6 +1,10 @@
-use std::{env, fs};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+};
 
 const SPV_HEADER_LENGTH: usize = 5;
+const SPV_HEADER_MAGIC: u32 = 0x07230203;
 const SPV_HEADER_MAGIC_NUM_OFFSET: usize = 0;
 const SPV_HEADER_INSTRUCTION_BOUND_OFFSET: usize = 3;
 
@@ -10,9 +14,12 @@ const SPV_INSTRUCTION_OP_TYPE_SAMPLED_IMAGE: u16 = 27;
 const SPV_INSTRUCTION_OP_TYPE_POINTER: u16 = 32;
 const SPV_INSTRUCTION_OP_VARIABLE: u16 = 59;
 const SPV_INSTRUCTION_OP_LOAD: u16 = 61;
+const SPV_INSTRUCTION_OP_DECORATE: u16 = 71;
 const SPV_INSTRUCTION_OP_SAMPLED_IMAGE: u16 = 86;
 
 const SPV_STORAGE_CLASS_UNIFORM_CONSTANT: u32 = 0;
+const SPV_DECORATION_BINDING: u32 = 33;
+const SPV_DECORATION_DESCRIPTOR_SET: u32 = 34;
 
 #[derive(Debug, Clone)]
 struct InstructionInsert {
@@ -39,7 +46,7 @@ fn main() {
 
     let mut spv_header = spv[0..SPV_HEADER_LENGTH].to_owned();
 
-    assert_eq!(spv_header[0], magic_number);
+    assert_eq!(magic_number, SPV_HEADER_MAGIC);
 
     let mut inserts = vec![];
 
@@ -53,6 +60,7 @@ fn main() {
     let mut op_type_pointer_idxs = vec![];
     let mut op_variables_idxs = vec![];
     let mut op_loads_idxs = vec![];
+    let mut op_decorate_idxs = vec![];
 
     // 1. Find locations instructions we need
     let mut spv_idx = 0;
@@ -76,6 +84,7 @@ fn main() {
             }
             SPV_INSTRUCTION_OP_VARIABLE => op_variables_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_LOAD => op_loads_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_DECORATE => op_decorate_idxs.push(spv_idx),
             _ => {}
         }
 
@@ -215,7 +224,6 @@ fn main() {
             v_res_ids
                 .iter()
                 .find_map(|&(v_res_id, sampler_v_res_id, underlying_image_id)| {
-                    eprintln!("{} {}", v_res_id, spv[l_idx + 3]);
                     (v_res_id == spv[l_idx + 3]).then_some((
                         l_idx,
                         sampler_v_res_id,
@@ -252,7 +260,55 @@ fn main() {
             });
         });
 
-    // 6. Insert New Instructions
+    // 6. OpDecorate
+
+    let mut sampler_id_to_decorations = HashMap::new();
+    let mut descriptor_sets_to_correct = HashSet::new();
+
+    // - Find the current binding and descriptor set pair for each combimgsamp
+    op_decorate_idxs.iter().for_each(|&d_idx| {
+        v_res_ids
+            .iter()
+            .for_each(|&(v_res_id, sampler_v_res_id, _)| {
+                if v_res_id == spv[d_idx + 1] {
+                    if spv[d_idx + 2] == SPV_DECORATION_BINDING {
+                        descriptor_sets_to_correct.insert(spv[d_idx + 3]);
+                        sampler_id_to_decorations
+                            .entry(sampler_v_res_id)
+                            .or_insert((None, None))
+                            .0 = Some((d_idx, spv[d_idx + 3]));
+                    } else if spv[d_idx + 2] == SPV_DECORATION_DESCRIPTOR_SET {
+                        sampler_id_to_decorations
+                            .entry(sampler_v_res_id)
+                            .or_insert((None, None))
+                            .1 = Some((d_idx, spv[d_idx + 3]));
+                    }
+                }
+            });
+    });
+
+    // - Insert new descriptor set and binding for new sampler
+    sampler_id_to_decorations.iter().for_each(
+        |(sampler_v_res_id, (maybe_binding, maybe_descriptor_set))| {
+            let (binding_idx, binding) = maybe_binding.unwrap();
+            let (descriptor_set_idx, descriptor_set) = maybe_descriptor_set.unwrap();
+            inserts.push(InstructionInsert {
+                previous_spv_idx: descriptor_set_idx.max(binding_idx),
+                instruction: vec![
+                    encode_word(4, SPV_INSTRUCTION_OP_DECORATE),
+                    *sampler_v_res_id,
+                    SPV_DECORATION_DESCRIPTOR_SET,
+                    descriptor_set,
+                    encode_word(4, SPV_INSTRUCTION_OP_DECORATE),
+                    *sampler_v_res_id,
+                    SPV_DECORATION_BINDING,
+                    binding + 1,
+                ],
+            })
+        },
+    );
+
+    // 7. Insert New Instructions
     inserts.sort_by_key(|instruction| instruction.previous_spv_idx);
     inserts.iter().rev().for_each(|new_instruction| {
         let offset = hiword(spv[new_instruction.previous_spv_idx]);
@@ -264,6 +320,58 @@ fn main() {
         }
     });
 
+    // 8. Correct OpDecorate Bindings
+    let mut candidates = HashMap::new();
+
+    let mut d_idx = 0;
+    while d_idx < new_spv.len() {
+        let op = new_spv[d_idx];
+        let byte_count = hiword(op);
+        let instruction = loword(op);
+        if instruction == SPV_INSTRUCTION_OP_DECORATE {
+            match new_spv[d_idx + 2] {
+                SPV_DECORATION_DESCRIPTOR_SET => {
+                    candidates
+                        .entry(new_spv[d_idx + 1])
+                        .or_insert((None, None))
+                        .0 = Some(new_spv[d_idx + 3])
+                }
+                SPV_DECORATION_BINDING => {
+                    candidates
+                        .entry(new_spv[d_idx + 1])
+                        .or_insert((None, None))
+                        .1 = Some((d_idx, new_spv[d_idx + 3]))
+                }
+                _ => {}
+            }
+        }
+        d_idx += byte_count as usize;
+    }
+
+    for descriptor_set in descriptor_sets_to_correct {
+        let mut bindings = candidates
+            .iter()
+            .filter_map(|(_, &(maybe_descriptor_set, maybe_binding))| {
+                let this_descriptor_set = maybe_descriptor_set.unwrap();
+                let (binding_idx, this_binding) = maybe_binding.unwrap();
+                (this_descriptor_set == descriptor_set).then_some((binding_idx, this_binding))
+            })
+            .collect::<Vec<_>>();
+
+        bindings.sort_by_cached_key(|&(_, binding)| binding);
+
+        let mut prev_binding = -1;
+        let mut increment = 0;
+        for (d_idx, binding) in bindings {
+            if binding as i32 == prev_binding {
+                increment += 1;
+            }
+            new_spv[d_idx + 3] += increment;
+            prev_binding = binding as i32;
+        }
+    }
+
+    // 9. Write New Header and New Code
     spv_header[SPV_HEADER_INSTRUCTION_BOUND_OFFSET] = instruction_bound;
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);
