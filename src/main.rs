@@ -30,7 +30,6 @@ const SPV_DECORATION_DESCRIPTOR_SET: u32 = 34;
 struct InstructionInsert {
     previous_spv_idx: usize,
     instruction: Vec<u32>,
-    word_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +68,7 @@ fn main() {
 
     let mut op_type_sampler_idx = None;
     let mut first_op_type_image_idx = None;
+    let mut first_op_deocrate_idx = None;
 
     let mut op_type_sampled_image_idxs = vec![];
     let mut op_type_pointer_idxs = vec![];
@@ -102,7 +102,10 @@ fn main() {
             }
             SPV_INSTRUCTION_OP_VARIABLE => op_variables_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_LOAD => op_loads_idxs.push(spv_idx),
-            SPV_INSTRUCTION_OP_DECORATE => op_decorate_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_DECORATE => {
+                op_decorate_idxs.push(spv_idx);
+                first_op_deocrate_idx.get_or_insert(spv_idx);
+            }
             SPV_INSTRUCTION_OP_TYPE_FUNCTION => op_type_function_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_FUNCTION_PARAMTER => op_function_parameter_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_FUNCTION_CALL => op_function_call_idxs.push(spv_idx),
@@ -134,7 +137,6 @@ fn main() {
             SPV_STORAGE_CLASS_UNIFORM_CONSTANT,
             op_type_sampler_res_id,
         ],
-        word_offset: 0,
     });
 
     // 3. OpTypePointer
@@ -161,7 +163,6 @@ fn main() {
                     SPV_STORAGE_CLASS_UNIFORM_CONSTANT,
                     underlying_image_id,
                 ],
-                word_offset: 0,
             });
 
             // - Change combined image sampler type to underlying image type
@@ -200,7 +201,6 @@ fn main() {
                     sampler_op_variable_res_id,
                     SPV_STORAGE_CLASS_UNIFORM_CONSTANT,
                 ],
-                word_offset: 0,
             });
             // - Save the OpVariable res id for later
             v_res_ids.push((v_res_id, sampler_op_variable_res_id, underlying_image_id));
@@ -247,7 +247,6 @@ fn main() {
                     image_op_load_res_id,
                     sampler_op_load_res_id,
                 ],
-                word_offset: 0,
             });
         });
 
@@ -278,44 +277,58 @@ fn main() {
             });
     });
 
-    // - Insert new descriptor set and binding for new sampler
-    sampler_id_to_decorations.iter().for_each(
-        |(sampler_v_res_id, (maybe_binding, maybe_descriptor_set))| {
+    let mut sampler_id_to_decorations = sampler_id_to_decorations.into_iter().collect::<Vec<_>>();
+    sampler_id_to_decorations.sort_by_key(|(_, (maybe_binding, _))| {
+        let (_, binding) = maybe_binding.unwrap();
+        binding
+    });
+    let sampler_id_to_decorations = sampler_id_to_decorations
+        .into_iter()
+        .map(|(sampler_id, (maybe_binding, maybe_descriptor_set))| {
             let (binding_idx, binding) = maybe_binding.unwrap();
             let (descriptor_set_idx, descriptor_set) = maybe_descriptor_set.unwrap();
+
+            (
+                sampler_id,
+                ((binding_idx, binding), (descriptor_set_idx, descriptor_set)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    // - Insert new descriptor set and binding for new sampler
+    sampler_id_to_decorations.iter().for_each(
+        |(sampler_v_res_id, ((_binding_idx, binding), (_descriptor_set_idx, descriptor_set)))| {
             instruction_inserts.push(InstructionInsert {
-                previous_spv_idx: descriptor_set_idx.max(binding_idx),
+                // NOTE: If bindings are not ordered reasonably in spv, the original
+                // implementation may fail.
+                // Example:
+                //      %u_other = (0, 1)
+                //      %u_combined = (0, 0)
+                //      %inserted_sampler = (0, 0)
+                // becomes
+                //      %u_other = (0, 1)
+                //      %u_combined = (0, 0)
+                //      %inserted_sampler = (0, 2)
+                // previous_spv_idx: descriptor_set_idx.max(binding_idx),
+                previous_spv_idx: first_op_deocrate_idx.unwrap(),
                 instruction: vec![
                     encode_word(4, SPV_INSTRUCTION_OP_DECORATE),
                     *sampler_v_res_id,
                     SPV_DECORATION_DESCRIPTOR_SET,
-                    descriptor_set,
+                    *descriptor_set,
                     encode_word(4, SPV_INSTRUCTION_OP_DECORATE),
                     *sampler_v_res_id,
                     SPV_DECORATION_BINDING,
                     binding + 1,
                 ],
-                word_offset: 0,
             })
         },
     );
 
     // 7. OpTypeFunction
-    // op_type_function_idxs
-    //     .iter()
-    //     .filter_map(|&tf_spv_idx| {
-    //         tp_res_ids.iter().find_map(|&(image_type_pointer, _)| {
-    //             (spv[tf_spv_idx + 3] == image_type_pointer).then_some(tf_spv_idx)
-    //         })
-    //     })
-    //     .for_each(|tf_spv_idx| {
-    //         word_inserts.push(WordInsert {
-    //             idx: tf_spv_idx,
-    //             word: op_type_sampler_res_id,
-    //             head_word_offset: 0,
-    //         });
-    //     });
     op_type_function_idxs.iter().for_each(|&tf_idx| {
+        // - Append a sampler OpTypePointer to OpTypeFunctions when an underlying image OpTypePointer
+        // is found.
         tp_res_ids.iter().for_each(|&(image_type_pointer, _)| {
             let word_count = hiword(spv[tf_idx]);
             for (i, ty) in spv[tf_idx + 3..tf_idx + word_count as usize]
@@ -325,7 +338,7 @@ fn main() {
                 if *ty == image_type_pointer {
                     word_inserts.push(WordInsert {
                         idx: tf_idx + 3 + i,
-                        word: op_type_sampler_res_id,
+                        word: op_type_pointer_sampler_res_id,
                         head_idx: tf_idx,
                     })
                 }
@@ -334,47 +347,112 @@ fn main() {
     });
 
     // 8. OpFunctionParameter
-    let mut paramter_res_ids = HashMap::new();
+    let mut parameter_res_ids = HashMap::new();
 
     op_function_parameter_idxs
         .iter()
         .filter_map(|&fp_idx| {
-            tp_res_ids.iter().find_map(|&(image_type_pointer, _)| {
-                (spv[fp_idx + 1] == image_type_pointer).then_some((fp_idx, spv[fp_idx + 2]))
-            })
+            // - Find all OpFunctionParameters that use an underlying image OpTypePointer
+            tp_res_ids
+                .iter()
+                .find_map(|&(image_type_pointer, underlying_image_id)| {
+                    (spv[fp_idx + 1] == image_type_pointer).then_some((
+                        fp_idx,
+                        spv[fp_idx + 2],
+                        underlying_image_id,
+                    ))
+                })
         })
-        .for_each(|(fp_idx, image_res_id)| {
-            let op_function_parameter_res_id = instruction_bound;
+        .for_each(|(fp_idx, image_res_id, underlying_image_id)| {
+            // - Append a new sampler OpFunctionParameter
+            let sampler_parameter_res_id = instruction_bound;
             instruction_bound += 1;
             instruction_inserts.push(InstructionInsert {
                 previous_spv_idx: fp_idx,
                 instruction: vec![
                     encode_word(3, SPV_INSTRUCTION_OP_FUNCTION_PARAMTER),
-                    op_type_sampler_res_id,
-                    op_function_parameter_res_id,
+                    op_type_pointer_sampler_res_id,
+                    sampler_parameter_res_id,
                 ],
-                word_offset: 0,
             });
-            paramter_res_ids.insert(image_res_id, op_function_parameter_res_id);
+            parameter_res_ids.insert(
+                image_res_id,
+                (sampler_parameter_res_id, underlying_image_id),
+            );
+        });
+
+    op_loads_idxs
+        .iter()
+        .filter_map(|&l_idx| {
+            // - Find all OpLoads that ref our parameter_res_ids
+            parameter_res_ids.iter().find_map(
+                |(&image_res_id, &(sampler_parameter_res_id, underlying_image_id))| {
+                    (image_res_id == spv[l_idx + 3]).then_some((
+                        l_idx,
+                        sampler_parameter_res_id,
+                        underlying_image_id,
+                    ))
+                },
+            )
+        })
+        .for_each(|(l_idx, sampler_parameter_res_id, underlying_image_id)| {
+            // - Insert OpLoads and OpSampledImage to replace combimgsamp
+            let image_op_load_res_id = instruction_bound;
+            instruction_bound += 1;
+
+            let image_original_res_id = spv[l_idx + 2];
+            let original_combined_res_id = new_spv[l_idx + 1];
+
+            new_spv[l_idx + 1] = underlying_image_id;
+            new_spv[l_idx + 2] = image_op_load_res_id;
+
+            let sampler_op_load_res_id = instruction_bound;
+            instruction_bound += 1;
+            instruction_inserts.push(InstructionInsert {
+                previous_spv_idx: l_idx,
+                instruction: vec![
+                    encode_word(4, SPV_INSTRUCTION_OP_LOAD),
+                    op_type_sampler_res_id,
+                    sampler_op_load_res_id,
+                    sampler_parameter_res_id,
+                    encode_word(5, SPV_INSTRUCTION_OP_SAMPLED_IMAGE),
+                    original_combined_res_id,
+                    image_original_res_id,
+                    image_op_load_res_id,
+                    sampler_op_load_res_id,
+                ],
+            });
         });
 
     // 9. OpFunctionCall
     op_function_call_idxs.iter().for_each(|&fc_idx| {
-        v_res_ids.iter().for_each(|&(image_id, sampler_id, _)| {
-            let word_count = hiword(spv[fc_idx]);
-            for (i, param) in spv[fc_idx + 4..fc_idx + word_count as usize]
-                .iter()
-                .enumerate()
-            {
-                if *param == image_id {
-                    word_inserts.push(WordInsert {
-                        idx: fc_idx + 4 + i,
-                        word: sampler_id,
-                        head_idx: fc_idx,
-                    })
+        parameter_res_ids
+            // - Handle use of nested function calls
+            .iter()
+            .map(|(&image_res_id, &(sampler_parameter_res_id, _))| {
+                (image_res_id, sampler_parameter_res_id)
+            })
+            // - Handle use of uniform variables
+            .chain(
+                v_res_ids
+                    .iter()
+                    .map(|&(image_id, sampler_id, _)| (image_id, sampler_id)),
+            )
+            .for_each(|(image_id, sampler_id)| {
+                let word_count = hiword(spv[fc_idx]);
+                for (i, param) in spv[fc_idx + 4..fc_idx + word_count as usize]
+                    .iter()
+                    .enumerate()
+                {
+                    if *param == image_id {
+                        word_inserts.push(WordInsert {
+                            idx: fc_idx + 4 + i,
+                            word: sampler_id,
+                            head_idx: fc_idx,
+                        })
+                    }
                 }
-            }
-        })
+            });
     });
 
     // 10. Insert New Instructions
@@ -405,10 +483,7 @@ fn main() {
             let offset = hiword(spv[new_instruction.previous_spv_idx]);
             for idx in 0..new_instruction.instruction.len() {
                 new_spv.insert(
-                    new_instruction.previous_spv_idx
-                        + offset as usize
-                        + idx
-                        + new_instruction.word_offset,
+                    new_instruction.previous_spv_idx + offset as usize + idx,
                     new_instruction.instruction[idx],
                 )
             }
