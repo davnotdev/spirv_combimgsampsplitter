@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    env, fs,
-};
+use std::collections::{HashMap, HashSet};
 
 const SPV_HEADER_LENGTH: usize = 5;
 const SPV_HEADER_MAGIC: u32 = 0x07230203;
@@ -39,19 +36,42 @@ struct WordInsert {
     head_idx: usize,
 }
 
-fn main() {
-    let spv_file = env::args().nth(1).unwrap();
-    let out_spv_file = env::args().nth(2).unwrap();
-    let spv = fs::read(spv_file)
-        .unwrap()
-        .chunks_exact(4)
+/// Helper to convert a `&[u8]` into a `Vec<u32>`.
+pub fn u8_slice_to_u32_vec(vec: &[u8]) -> Vec<u32> {
+    assert_eq!(
+        vec.len() % 4,
+        0,
+        "Input slice length must be a multiple of 4."
+    );
+
+    vec.chunks_exact(4)
         .map(|chunk| {
             (chunk[0] as u32)
                 | ((chunk[1] as u32) << 8)
                 | ((chunk[2] as u32) << 16)
                 | ((chunk[3] as u32) << 24)
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+/// Helper to convert a `&[u32]` into a `Vec<u8>`.
+pub fn u32_slice_to_u8_vec(vec: &[u32]) -> Vec<u8> {
+    vec.iter()
+        .flat_map(|&num| {
+            vec![
+                (num & 0xFF) as u8,
+                ((num >> 8) & 0xFF) as u8,
+                ((num >> 16) & 0xFF) as u8,
+                ((num >> 24) & 0xFF) as u8,
+            ]
+        })
+        .collect::<Vec<u8>>()
+}
+
+/// Perform the operation on a `Vec<u32>`.
+/// Use [u8_slice_to_u32_vec] to convert a `&[u8]` into a `Vec<u32>`
+pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
+    let spv = spv.to_owned();
 
     let mut instruction_bound = spv[SPV_HEADER_INSTRUCTION_BOUND_OFFSET];
     let magic_number = spv[SPV_HEADER_MAGIC_NUM_OFFSET];
@@ -552,14 +572,7 @@ fn main() {
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);
 
-    fs::write(
-        out_spv_file,
-        out_spv
-            .iter()
-            .flat_map(|&n| n.to_le_bytes())
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    Ok(out_spv)
 }
 
 fn hiword(value: u32) -> u16 {
