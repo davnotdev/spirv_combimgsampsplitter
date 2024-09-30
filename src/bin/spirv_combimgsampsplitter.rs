@@ -13,9 +13,9 @@ fn main() {
 
     let spv_bytes = fs::read(input_path).unwrap();
 
-    let spv = combimgsampsplitter::u8_slice_to_u32_vec(&spv_bytes);
-    let out_spv = combimgsampsplitter::combimgsampsplitter(&spv).unwrap();
-    let out_spv_bytes = combimgsampsplitter::u32_slice_to_u8_vec(&out_spv);
+    let spv = spirv_combimgsampsplitter::u8_slice_to_u32_vec(&spv_bytes);
+    let out_spv = spirv_combimgsampsplitter::combimgsampsplitter(&spv).unwrap();
+    let out_spv_bytes = spirv_combimgsampsplitter::u32_slice_to_u8_vec(&out_spv);
 
     fs::write(output_path, out_spv_bytes).unwrap();
 }

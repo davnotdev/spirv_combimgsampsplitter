@@ -1,5 +1,5 @@
 [package]
-name = "combimgsampsplitter"
+name = "spirv_combimgsampsplitter"
 version = "0.1.0"
 edition = "2021"
 
