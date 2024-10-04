@@ -282,7 +282,6 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
             .for_each(|&(v_res_id, sampler_v_res_id, _)| {
                 if v_res_id == spv[d_idx + 1] {
                     if spv[d_idx + 2] == SPV_DECORATION_BINDING {
-                        descriptor_sets_to_correct.insert(spv[d_idx + 3]);
                         sampler_id_to_decorations
                             .entry(sampler_v_res_id)
                             .or_insert((None, None))
@@ -292,6 +291,7 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
                             .entry(sampler_v_res_id)
                             .or_insert((None, None))
                             .1 = Some((d_idx, spv[d_idx + 3]));
+                        descriptor_sets_to_correct.insert(spv[d_idx + 3]);
                     }
                 }
             });
@@ -561,13 +561,7 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
         }
     }
 
-    // 12. Remove OpNops
-    let mut new_spv = new_spv
-        .into_iter()
-        .filter(|&word| word != SPV_NOP_WORD)
-        .collect::<Vec<_>>();
-
-    // 13. Write New Header and New Code
+    // 12. Write New Header and New Code
     spv_header[SPV_HEADER_INSTRUCTION_BOUND_OFFSET] = instruction_bound;
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);
