@@ -5,6 +5,8 @@ const SPV_HEADER_MAGIC: u32 = 0x07230203;
 const SPV_HEADER_MAGIC_NUM_OFFSET: usize = 0;
 const SPV_HEADER_INSTRUCTION_BOUND_OFFSET: usize = 3;
 
+const SPV_INSTRUCTION_OP_NOP: u16 = 1;
+const SPV_INSTRUCTION_OP_TYPE_VOID: u16 = 19;
 const SPV_INSTRUCTION_OP_TYPE_IMAGE: u16 = 25;
 const SPV_INSTRUCTION_OP_TYPE_SAMPLER: u16 = 26;
 const SPV_INSTRUCTION_OP_TYPE_SAMPLED_IMAGE: u16 = 27;
@@ -16,8 +18,6 @@ const SPV_INSTRUCTION_OP_VARIABLE: u16 = 59;
 const SPV_INSTRUCTION_OP_LOAD: u16 = 61;
 const SPV_INSTRUCTION_OP_DECORATE: u16 = 71;
 const SPV_INSTRUCTION_OP_SAMPLED_IMAGE: u16 = 86;
-
-const SPV_NOP_WORD: u32 = encode_word(1, 0);
 
 const SPV_STORAGE_CLASS_UNIFORM_CONSTANT: u32 = 0;
 const SPV_DECORATION_BINDING: u32 = 33;
@@ -70,8 +70,8 @@ pub fn u32_slice_to_u8_vec(vec: &[u32]) -> Vec<u8> {
 
 /// Perform the operation on a `Vec<u32>`.
 /// Use [u8_slice_to_u32_vec] to convert a `&[u8]` into a `Vec<u32>`
-pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
-    let spv = spv.to_owned();
+pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
+    let spv = in_spv.to_owned();
 
     let mut instruction_bound = spv[SPV_HEADER_INSTRUCTION_BOUND_OFFSET];
     let magic_number = spv[SPV_HEADER_MAGIC_NUM_OFFSET];
@@ -89,6 +89,7 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut op_type_sampler_idx = None;
     let mut first_op_type_image_idx = None;
     let mut first_op_deocrate_idx = None;
+    let mut first_op_type_void_idx = None;
 
     let mut op_type_sampled_image_idxs = vec![];
     let mut op_type_pointer_idxs = vec![];
@@ -107,9 +108,12 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
         let instruction = loword(op);
 
         match instruction {
+            SPV_INSTRUCTION_OP_TYPE_VOID => {
+                first_op_type_void_idx = Some(spv_idx);
+            }
             SPV_INSTRUCTION_OP_TYPE_SAMPLER => {
                 op_type_sampler_idx = Some(spv_idx);
-                new_spv[spv_idx..spv_idx + word_count as usize].fill(SPV_NOP_WORD);
+                new_spv[spv_idx] = encode_word(word_count, SPV_INSTRUCTION_OP_NOP);
             }
             SPV_INSTRUCTION_OP_TYPE_IMAGE => {
                 first_op_type_image_idx.get_or_insert(spv_idx);
@@ -136,7 +140,12 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
     }
 
     // 2. Insert OpTypeSampler and respective OpTypePointer if neccessary
-    let op_type_image_idx = first_op_type_image_idx.unwrap();
+
+    // - If there has been no OpTypeImage, there will be nothing to do
+    if first_op_type_image_idx.is_none() {
+        return Ok(in_spv.to_vec());
+    };
+
     let op_type_sampler_res_id = if let Some(idx) = op_type_sampler_idx {
         spv[idx + 1]
     } else {
@@ -148,7 +157,9 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
     let op_type_pointer_sampler_res_id = instruction_bound;
     instruction_bound += 1;
     instruction_inserts.push(InstructionInsert {
-        previous_spv_idx: op_type_image_idx,
+        // Let's avoid trouble and just insert after OpTypeVoid.
+        // previous_spv_idx: op_type_image_idx,
+        previous_spv_idx: first_op_type_void_idx.unwrap(),
         instruction: vec![
             encode_word(2, SPV_INSTRUCTION_OP_TYPE_SAMPLER),
             op_type_sampler_res_id,
@@ -561,7 +572,28 @@ pub fn combimgsampsplitter(spv: &[u32]) -> Result<Vec<u32>, ()> {
         }
     }
 
-    // 12. Write New Header and New Code
+    // 12. Remove the original optypesampler
+    // we end up creating our own optypesampler to resolve ordering issues.
+
+    let mut i_idx = 0;
+    while i_idx < new_spv.len() {
+        let op = new_spv[i_idx];
+        let word_count = hiword(op);
+        let instruction = loword(op);
+
+        if instruction == SPV_INSTRUCTION_OP_NOP {
+            for _ in 0..word_count {
+                new_spv.remove(i_idx);
+            }
+
+            // Assuming there was only one OpTypeSampler, this only needs to run once.
+            break;
+        }
+
+        i_idx += word_count as usize;
+    }
+
+    // 13. Write New Header and New Code
     spv_header[SPV_HEADER_INSTRUCTION_BOUND_OFFSET] = instruction_bound;
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);
