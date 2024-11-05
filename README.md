@@ -13,11 +13,14 @@ Special edge cases such as the use of combined image samplers in function parame
 
 ```glsl
 layout(set = 0, binding = 0) uniform sampler2D u_texture;
+layout(set = 0, binding = 1) uniform sampler2DArray u_texture_array;
 
 // is converted into...
 
 layout(set = 0, binding = 0) uniform texture2D u_texture;
 layout(set = 0, binding = 1) uniform sampler u_sampler;
+layout(set = 0, binding = 2) uniform texture2D u_texture_array[];
+layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
 ```
 
 > Enjoy!
