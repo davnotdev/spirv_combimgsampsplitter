@@ -9,4 +9,6 @@ license = "BSD-2-Clause"
 keywords = ["gamedev", "graphics"]
 categories = ["graphics"]
 
-[dependencies]
+[dev-dependencies]
+naga = { version = "23", features = ["spv-in", "wgsl-out"]}
+

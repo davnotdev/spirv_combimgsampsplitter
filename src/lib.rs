@@ -9,6 +9,9 @@ mod type_function;
 mod type_pointer;
 mod variable;
 
+#[cfg(test)]
+mod test;
+
 use decorate::*;
 use function_call::*;
 use function_parameter::*;
@@ -24,6 +27,7 @@ const SPV_HEADER_MAGIC_NUM_OFFSET: usize = 0;
 const SPV_HEADER_INSTRUCTION_BOUND_OFFSET: usize = 3;
 
 const SPV_INSTRUCTION_OP_NOP: u16 = 1;
+const SPV_INSTRUCTION_OP_EXTENSION: u16 = 10;
 const SPV_INSTRUCTION_OP_CAPABILITY: u16 = 17;
 const SPV_INSTRUCTION_OP_TYPE_VOID: u16 = 19;
 const SPV_INSTRUCTION_OP_TYPE_INT: u16 = 21;
@@ -71,6 +75,9 @@ const SPV_STORAGE_CLASS_UNIFORM_CONSTANT: u32 = 0;
 const SPV_DECORATION_BINDING: u32 = 33;
 const SPV_DECORATION_DESCRIPTOR_SET: u32 = 34;
 const SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY: u32 = 5302;
+const SPV_EXT_DESCRIPTOR_INDEXING: [u32; 7] = [
+    1599492179, 1599363141, 1668506980, 1953524082, 1767862895, 2019910766, 6778473,
+];
 
 #[derive(Debug, Clone)]
 struct InstructionInsert {
@@ -136,7 +143,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut new_spv = spv.clone();
 
     let mut has_arrayed_image = false;
-    let mut has_op_capability_runtime_descriptor_array = true;
+    let mut needs_op_capability_runtime_descriptor_array = true;
     let mut op_capability_shader_idx = None;
     let mut op_type_sampler_idx = None;
     let mut first_op_deocrate_idx = None;
@@ -173,7 +180,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 if spv[spv_idx + 1] == 1 {
                     op_capability_shader_idx = Some(spv_idx);
                 } else if spv[spv_idx + 1] == SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY {
-                    has_op_capability_runtime_descriptor_array = false;
+                    needs_op_capability_runtime_descriptor_array = false;
                 }
             }
             SPV_INSTRUCTION_OP_TYPE_SAMPLER => {
@@ -273,13 +280,20 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
     // 3. Insert Instructions Needed for Arrayed Images
     let arrayed_image_constants = if has_arrayed_image {
-        if !has_op_capability_runtime_descriptor_array {
+        if needs_op_capability_runtime_descriptor_array {
             instruction_inserts.push(InstructionInsert {
                 previous_spv_idx: op_capability_shader_idx.unwrap(),
                 instruction: vec![
                     encode_word(2, SPV_INSTRUCTION_OP_CAPABILITY),
                     SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY,
-                ],
+                    encode_word(
+                        1 + SPV_EXT_DESCRIPTOR_INDEXING.len() as u16,
+                        SPV_INSTRUCTION_OP_EXTENSION,
+                    ),
+                ]
+                .into_iter()
+                .chain(SPV_EXT_DESCRIPTOR_INDEXING)
+                .collect::<Vec<u32>>(),
             });
         }
 
@@ -350,9 +364,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let tp_res = type_pointer(TypePointerIn {
         spv: &spv,
         new_spv: &mut new_spv,
-        instruction_bound: &mut instruction_bound,
 
-        instruction_inserts: &mut instruction_inserts,
         op_type_image_idxs: &op_type_image_idxs,
         op_type_pointer_idxs: &op_type_pointer_idxs,
         op_type_sampled_image_idxs: &op_type_sampled_image_idxs,

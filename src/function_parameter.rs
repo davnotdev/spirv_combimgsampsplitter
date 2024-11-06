@@ -17,7 +17,6 @@ pub struct FunctionParameterOut {
     pub sampler_parameter_res_id: u32,
     pub underlying_image_id: u32,
     pub is_array: bool,
-    pub type_pointer_underlying_image_id: Option<u32>,
 }
 
 pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOut> {
@@ -42,14 +41,12 @@ pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOu
                      tp_res_id,
                      underlying_image_id,
                      is_array,
-                     type_pointer_underlying_image_id,
                  }| {
                     (spv[fp_idx + 1] == tp_res_id).then_some((
                         fp_idx,
                         spv[fp_idx + 2],
                         underlying_image_id,
                         is_array,
-                        type_pointer_underlying_image_id,
                     ))
                 },
             )
@@ -60,7 +57,6 @@ pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOu
                 image_parameter_res_id,
                 underlying_image_id,
                 is_array,
-                type_pointer_underlying_image_id,
             )| {
                 // - Append a new sampler OpFunctionParameter
                 let sampler_parameter_res_id = *instruction_bound;
@@ -83,7 +79,6 @@ pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOu
                         sampler_parameter_res_id,
                         underlying_image_id,
                         is_array,
-                        type_pointer_underlying_image_id,
                     ),
                 );
             },
@@ -98,7 +93,6 @@ pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOu
                     sampler_parameter_res_id,
                     underlying_image_id,
                     is_array,
-                    type_pointer_underlying_image_id,
                 ),
             )| {
                 FunctionParameterOut {
@@ -106,7 +100,6 @@ pub fn function_parameter(fp_in: FunctionParameterIn) -> Vec<FunctionParameterOu
                     sampler_parameter_res_id,
                     underlying_image_id,
                     is_array,
-                    type_pointer_underlying_image_id,
                 }
             },
         )
