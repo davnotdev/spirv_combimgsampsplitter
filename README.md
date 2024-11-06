@@ -33,12 +33,12 @@ In WGSL, `sampler2DArray` would translate to `texture_2d_array<f32>` and `bindin
 
 ### Naga
 
-| Test                | Status | Notes                 |
-| ------------------- | ------ | --------------------- |
-| `test.frag`         | ✅     |                       |
-| `test_arrayed.frag` | 🆗     | Requires Modification |
-| `test_nested.frag`  | ✅     |                       |
-| `test_mixed.frag`   | ❌     |                       |
+| Test                | Status | Notes                                                    |
+| ------------------- | ------ | -------------------------------------------------------- |
+| `test.frag`         | ✅     |                                                          |
+| `test_arrayed.frag` | 🆗     | Requires Modification                                    |
+| `test_nested.frag`  | ✅     |                                                          |
+| `test_mixed.frag`   | ❌     | [WGPU #4857](https://github.com/gfx-rs/wgpu/issues/4857) |
 
 ### Tint
 
