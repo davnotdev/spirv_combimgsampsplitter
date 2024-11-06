@@ -22,14 +22,32 @@ layout(set = 0, binding = 1) uniform sampler u_sampler;
 
 > Enjoy!
 
-## Note about `samplerXArray`
+## Note on `samplerXArray`
 
 Variables of type of `sampler2DArray` do not convert to `texture2D[]` and `sampler[]`.
 (Though they could. Open an issue if you would like to see that).
 Rather, they are in a "WGSL-friendly" format that cannot directly be translated back to GLSL.
 In WGSL, `sampler2DArray` would translate to `texture_2d_array<f32>` and `binding_array<sampler>`.
 
-## WGSL Translation
+## Note on WGSL Translation
+
+### Naga
+
+| Test                | Status | Notes                 |
+| ------------------- | ------ | --------------------- |
+| `test.frag`         | ✅     |                       |
+| `test_arrayed.frag` | 🆗     | Requires Modification |
+| `test_nested.frag`  | ✅     |                       |
+| `test_mixed.frag`   | ❌     |                       |
+
+### Tint
+
+| Test                | Status | Notes           |
+| ------------------- | ------ | --------------- |
+| `test.frag`         | ✅     |                 |
+| `test_arrayed.frag` | ❌     | Fails Assertion |
+| `test_nested.frag`  | ✅     |                 |
+| `test_mixed.frag`   | ❌     | Fails Assertion |
 
 ## Library Usage
 
@@ -50,4 +68,3 @@ spirv_combimgsampsplitter in.spv out.spv
 # or
 cargo r -- in.spv out.spv
 ```
-
