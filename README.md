@@ -22,14 +22,14 @@ layout(set = 0, binding = 1) uniform sampler u_sampler;
 
 > Enjoy!
 
-## Note on `samplerXArray`
+## Notes on `samplerXArray`
 
 Variables of type of `sampler2DArray` do not convert to `texture2D[]` and `sampler[]`.
 (Though they could. Open an issue if you would like to see that).
 Rather, they are in a "WGSL-friendly" format that cannot directly be translated back to GLSL.
 In WGSL, `sampler2DArray` would translate to `texture_2d_array<f32>` and `binding_array<sampler>`.
 
-## Note on WGSL Translation
+## Notes on WGSL Translation
 
 ### Naga
 
