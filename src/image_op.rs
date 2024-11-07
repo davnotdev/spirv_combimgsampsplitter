@@ -45,11 +45,13 @@ pub fn image_op(io_in: ImageOp) {
                      new_sampler_v_res_id,
                      underlying_image_id,
                      is_array,
+                     type_pointer_underlying_image_id,
                  }| {
                     (is_array && v_res_id == spv[l_idx + 3]).then_some((
                         l_idx,
                         new_sampler_v_res_id,
                         underlying_image_id,
+                        type_pointer_underlying_image_id,
                     ))
                 },
             )
@@ -62,11 +64,13 @@ pub fn image_op(io_in: ImageOp) {
                      sampler_parameter_res_id,
                      underlying_image_id,
                      is_array,
+                     type_pointer_underlying_image_id,
                  }| {
                     (*is_array && *image_parameter_res_id == spv[l_idx + 3]).then_some((
                         l_idx,
                         *sampler_parameter_res_id,
                         *underlying_image_id,
+                        *type_pointer_underlying_image_id,
                     ))
                 },
             )
@@ -76,6 +80,7 @@ pub fn image_op(io_in: ImageOp) {
                 l_idx,
                 new_sampler_v_res_id,
                 underlying_image_id,
+                type_pointer_underlying_image_id,
             )| {
                 // - Find OpImage...s that ref our OpLoad res ids
                 op_image_op_idxs.iter().find_map(|&io_idx| {
@@ -84,6 +89,7 @@ pub fn image_op(io_in: ImageOp) {
                         l_idx,
                         new_sampler_v_res_id,
                         underlying_image_id,
+                        type_pointer_underlying_image_id,
                     ))
                 })
             },
@@ -94,24 +100,33 @@ pub fn image_op(io_in: ImageOp) {
                 l_idx,
                 new_sampler_v_res_id,
                 underlying_image_id,
+                type_pointer_underlying_image_id,
             )| {
                 // - Insert the following pseudocode
                 //
                 // ```
-                // let z = tex_coord.z;
-                // let sam = samplers[z];
-                // let comb = sampledImage(texture_array, sam);
+                // let z_1 = tex_coord.z;
+                // let tex = textures[z_1];
+                // let z_2 = tex_coord.z;
+                // let sam = samplers[z_2];
+                // let comb = sampledImage(tex, sam);
                 // ```
                 // ac => access chain
                 // c => converted
                 // l => load
                 //
 
+                let l_z_1 = *instruction_bound;
+                *instruction_bound += 1;
+                let c_z_1 = *instruction_bound;
+                *instruction_bound += 1;
+                let ac_tex = *instruction_bound;
+                *instruction_bound += 1;
                 let l_tex = *instruction_bound;
                 *instruction_bound += 1;
-                let l_z = *instruction_bound;
+                let l_z_2 = *instruction_bound;
                 *instruction_bound += 1;
-                let c_z = *instruction_bound;
+                let c_z_2 = *instruction_bound;
                 *instruction_bound += 1;
                 let ac_sam = *instruction_bound;
                 *instruction_bound += 1;
@@ -135,29 +150,46 @@ pub fn image_op(io_in: ImageOp) {
 
                 // - New Instructions
                 let mut instruction = vec![
-                    // %l_tex = OpLoad %. %tex_id
+                    // %ac_tex_coord_1 = OpVectorExtractDynamic %. %tex_coord %2
+                    encode_word(5, SPV_INSTRUCTION_OP_VECTOR_EXTRACT_DYNAMIC),
+                    op_type_float_id,
+                    l_z_1,
+                    tex_coord_id,
+                    op_constant_2_id,
+                    // %c_z_1 = OpConvertFToI %. %l_z_1
+                    encode_word(4, SPV_INSTRUCTION_OP_CONVERT_F_TO_I),
+                    op_type_int_id,
+                    c_z_1,
+                    l_z_1,
+                    // %ac_tex = OpAccessChain %. %tex %c_z_1
+                    encode_word(5, SPV_INSTRUCTION_OP_ACCESS_CHAIN),
+                    type_pointer_underlying_image_id.unwrap(),
+                    ac_tex,
+                    tex_id,
+                    c_z_1,
+                    // %l_tex = OpLoad %. %ac_tex
                     encode_word(4, SPV_INSTRUCTION_OP_LOAD),
                     underlying_image_id,
                     l_tex,
-                    tex_id,
+                    ac_tex,
                     // ---
-                    // %l_z = OpVectorExtractDynamic %. %tex_coord %2
+                    // %ac_tex_coord_2 = OpVectorExtractDynamic %. %tex_coord %2
                     encode_word(5, SPV_INSTRUCTION_OP_VECTOR_EXTRACT_DYNAMIC),
                     op_type_float_id,
-                    l_z,
+                    l_z_2,
                     tex_coord_id,
                     op_constant_2_id,
-                    // %c_z = OpConvertFToI %. %l_z
+                    // %c_z_2 = OpConvertFToI %. %l_z_2
                     encode_word(4, SPV_INSTRUCTION_OP_CONVERT_F_TO_I),
                     op_type_int_id,
-                    c_z,
-                    l_z,
-                    // %ac_sam = OpAccessChain %. %tex_coord %c_z
+                    c_z_2,
+                    l_z_2,
+                    // %ac_sam = OpAccessChain %. %tex_coord %c_z_2
                     encode_word(5, SPV_INSTRUCTION_OP_ACCESS_CHAIN),
                     op_type_pointer_sampler_res_id,
                     ac_sam,
                     new_sampler_v_res_id,
-                    c_z,
+                    c_z_2,
                     // %l_sam = OpLoad %. %ac_sam
                     encode_word(4, SPV_INSTRUCTION_OP_LOAD),
                     op_type_sampler_res_id,
