@@ -13,21 +13,17 @@ Special edge cases such as the use of combined image samplers in function parame
 
 ```glsl
 layout(set = 0, binding = 0) uniform sampler2D u_texture;
+layout(set = 0, binding = 1) uniform sampler2DArray u_texture_array;
 
 // is converted into...
 
 layout(set = 0, binding = 0) uniform texture2D u_texture;
 layout(set = 0, binding = 1) uniform sampler u_sampler;
+layout(set = 0, binding = 2) uniform texture2D u_texture_array[];
+layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
 ```
 
 > Enjoy!
-
-## Notes on `samplerXArray`
-
-Variables of type of `sampler2DArray` do not convert to `texture2D[]` and `sampler[]`.
-(Though they could. Open an issue if you would like to see that).
-Rather, they are in a "WGSL-friendly" format that cannot directly be translated back to GLSL.
-In WGSL, `sampler2DArray` would translate to `texture_2d_array<f32>` and `binding_array<sampler>`.
 
 ## Notes on WGSL Translation
 
