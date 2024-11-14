@@ -25,11 +25,11 @@ layout(set = 0, binding = 2) uniform texture2DArray u_texture_array;
 layout(set = 0, binding = 3) uniform sampler u_sampler;
 ```
 
+> Enjoy!
+
 ```
 spirv_combimgsampsplitter = "0.3"
 ```
-
-> Enjoy!
 
 ## Notes on WGSL Translation
 
