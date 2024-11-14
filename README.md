@@ -27,10 +27,6 @@ layout(set = 0, binding = 3) uniform sampler u_sampler;
 
 > Enjoy!
 
-```
-spirv_combimgsampsplitter = "0.3"
-```
-
 ## Notes on WGSL Translation
 
 ### Naga
@@ -59,6 +55,12 @@ spirv_combimgsampsplitter = "0.3"
 
 ## Library Usage
 
+Add this to your `Cargo.toml`:
+
+```
+spirv_combimgsampsplitter = "0.3"
+```
+
 ```rust
 let spv_bytes: Vec<u8> = fs::read("in.spv").unwrap();
 
@@ -72,7 +74,10 @@ fs::write("out.spv", out_spv_bytes).unwrap();
 ## CLI Usage
 
 ```bash
+cargo install spirv_combimgsampsplitter
 spirv_combimgsampsplitter in.spv out.spv
 # or
+git clone https://github.com/davnotdev/spirv_combimgsampsplitter
+cd spirv_combimgsampsplitter
 cargo r -- in.spv out.spv
 ```
