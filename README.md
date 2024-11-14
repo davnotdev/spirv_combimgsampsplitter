@@ -25,6 +25,10 @@ layout(set = 0, binding = 2) uniform texture2DArray u_texture_array;
 layout(set = 0, binding = 3) uniform sampler u_sampler;
 ```
 
+```
+spirv_combimgsampsplitter = "0.3"
+```
+
 > Enjoy!
 
 ## Notes on WGSL Translation
@@ -51,6 +55,7 @@ layout(set = 0, binding = 3) uniform sampler u_sampler;
 
 - Translating `sampler2D[N]` and `sampler2DArray[N]` is NOT supported.
 - After being split, the SPIR-V will not translate back to GLSL "one-to-one", the translation back to GLSL using either `naga` or `tint` creates a combined image sampler!
+- Do NOT use older versions of this crate, they are buggy.
 
 ## Library Usage
 
