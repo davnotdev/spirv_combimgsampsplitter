@@ -17,7 +17,6 @@ pub struct VariableOut {
     pub new_sampler_v_res_id: u32,
     pub underlying_image_id: u32,
     pub is_array: bool,
-    pub type_pointer_underlying_image_id: Option<u32>,
 }
 
 pub fn variable(v_in: VariableIn) -> Vec<VariableOut> {
@@ -42,20 +41,18 @@ pub fn variable(v_in: VariableIn) -> Vec<VariableOut> {
                      tp_res_id,
                      underlying_image_id,
                      is_array,
-                     type_pointer_underlying_image_id,
                  }| {
                     (tp_res_id == spv[v_idx + 1]).then_some((
                         v_idx,
                         spv[v_idx + 2],
                         underlying_image_id,
                         is_array,
-                        type_pointer_underlying_image_id,
                     ))
                 },
             )
         })
         .for_each(
-            |(v_idx, v_res_id, underlying_image_id, is_array, type_pointer_underlying_image_id)| {
+            |(v_idx, v_res_id, underlying_image_id, is_array)| {
                 // - Inject OpVariable for new sampler
                 let new_sampler_v_res_id = *instruction_bound;
                 *instruction_bound += 1;
@@ -78,7 +75,6 @@ pub fn variable(v_in: VariableIn) -> Vec<VariableOut> {
                     new_sampler_v_res_id,
                     underlying_image_id,
                     is_array,
-                    type_pointer_underlying_image_id,
                 });
             },
         );

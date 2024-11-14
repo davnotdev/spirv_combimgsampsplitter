@@ -364,8 +364,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let tp_res = type_pointer(TypePointerIn {
         spv: &spv,
         new_spv: &mut new_spv,
-        instruction_bound: &mut instruction_bound,
-        instruction_inserts: &mut instruction_inserts,
+
         op_type_image_idxs: &op_type_image_idxs,
         op_type_pointer_idxs: &op_type_pointer_idxs,
         op_type_sampled_image_idxs: &op_type_sampled_image_idxs,
