@@ -29,21 +29,21 @@ layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
 
 ### Naga
 
-| Test                | Status | Notes                                                    |
-| ------------------- | ------ | -------------------------------------------------------- |
-| `test.frag`         | ✅     |                                                          |
-| `test_arrayed.frag` | 🆗     | Requires Modification                                    |
-| `test_nested.frag`  | ✅     |                                                          |
-| `test_mixed.frag`   | ❌     | [WGPU #4857](https://github.com/gfx-rs/wgpu/issues/4857) |
+| Test                | Status | Notes                                                                                                                            |
+| ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `test.frag`         | ✅     |                                                                                                                                  |
+| `test_nested.frag`  | ✅     |                                                                                                                                  |
+| `test_arrayed.frag` | 🆗     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1)                                                            |
+| `test_mixed.frag`   | ❌     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) and [WGPU #6523](https://github.com/gfx-rs/wgpu/pull/6523) |                |
 
 ### Tint
 
-| Test                | Status | Notes           |
-| ------------------- | ------ | --------------- |
-| `test.frag`         | ✅     |                 |
-| `test_arrayed.frag` | ❌     | Fails Assertion |
-| `test_nested.frag`  | ✅     |                 |
-| `test_mixed.frag`   | ❌     | Fails Assertion |
+| Test                | Status | Notes                        |
+| ------------------- | ------ | ---------------------------- |
+| `test.frag`         | ✅     |                              |
+| `test_nested.frag`  | ✅     |                              |
+| `test_arrayed.frag` | ❌     | Binding Arrays Not Supprted  |
+| `test_mixed.frag`   | ❌     | Binding Arrays Not Supported |
 
 ## Library Usage
 
