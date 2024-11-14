@@ -19,8 +19,10 @@ layout(set = 0, binding = 1) uniform sampler2DArray u_texture_array;
 
 layout(set = 0, binding = 0) uniform texture2D u_texture;
 layout(set = 0, binding = 1) uniform sampler u_sampler;
-layout(set = 0, binding = 2) uniform texture2D u_texture_array[];
-layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
+
+// *texture2DArray doesn't exist in glsl, but in wgsl, this would be texture_2d_array<f32>
+layout(set = 0, binding = 2) uniform texture2DArray u_texture_array;
+layout(set = 0, binding = 3) uniform sampler u_sampler;
 ```
 
 > Enjoy!
@@ -29,21 +31,26 @@ layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
 
 ### Naga
 
-| Test                | Status | Notes                                                                                                                            |
-| ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `test.frag`         | ✅     |                                                                                                                                  |
-| `test_nested.frag`  | ✅     |                                                                                                                                  |
-| `test_arrayed.frag` | 🆗     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) Requires simple mod                                        |
-| `test_mixed.frag`   | ❌     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) and [WGPU #6523](https://github.com/gfx-rs/wgpu/pull/6523) |
+| Test                | Status |
+| ------------------- | ------ |
+| `test.frag`         | ✅     |
+| `test_nested.frag`  | ✅     |
+| `test_arrayed.frag` | ✅     |
+| `test_mixed.frag`   | ✅     |
 
 ### Tint
 
-| Test                | Status | Notes                        |
-| ------------------- | ------ | ---------------------------- |
-| `test.frag`         | ✅     |                              |
-| `test_nested.frag`  | ✅     |                              |
-| `test_arrayed.frag` | ❌     | Binding Arrays Not Suppprted |
-| `test_mixed.frag`   | ❌     | Binding Arrays Not Supported |
+| Test                | Status |
+| ------------------- | ------ |
+| `test.frag`         | ✅     |
+| `test_nested.frag`  | ✅     |
+| `test_arrayed.frag` | ✅     |
+| `test_mixed.frag`   | ✅     |
+
+## Notes
+
+- Translating `sampler2D[N]` and `sampler2DArray[N]` is NOT supported.
+- After being split, the SPIR-V will not translate back to GLSL "one-to-one", the translation back to GLSL using either `naga` or `tint` creates a combined image sampler!
 
 ## Library Usage
 

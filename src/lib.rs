@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 mod decorate;
 mod function_call;
 mod function_parameter;
-mod image_op;
 mod load;
 mod type_function;
 mod type_pointer;
@@ -15,7 +14,6 @@ mod test;
 use decorate::*;
 use function_call::*;
 use function_parameter::*;
-use image_op::*;
 use load::*;
 use type_function::*;
 use type_pointer::*;
@@ -27,57 +25,22 @@ const SPV_HEADER_MAGIC_NUM_OFFSET: usize = 0;
 const SPV_HEADER_INSTRUCTION_BOUND_OFFSET: usize = 3;
 
 const SPV_INSTRUCTION_OP_NOP: u16 = 1;
-const SPV_INSTRUCTION_OP_EXTENSION: u16 = 10;
-const SPV_INSTRUCTION_OP_CAPABILITY: u16 = 17;
 const SPV_INSTRUCTION_OP_TYPE_VOID: u16 = 19;
-const SPV_INSTRUCTION_OP_TYPE_INT: u16 = 21;
-const SPV_INSTRUCTION_OP_TYPE_FLOAT: u16 = 22;
 const SPV_INSTRUCTION_OP_TYPE_IMAGE: u16 = 25;
 const SPV_INSTRUCTION_OP_TYPE_SAMPLER: u16 = 26;
 const SPV_INSTRUCTION_OP_TYPE_SAMPLED_IMAGE: u16 = 27;
-const SPV_INSTRUCTION_OP_TYPE_RUNTIME_ARRAY: u16 = 29;
 const SPV_INSTRUCTION_OP_TYPE_POINTER: u16 = 32;
 const SPV_INSTRUCTION_OP_TYPE_FUNCTION: u16 = 33;
-const SPV_INSTRUCTION_OP_CONSTANT: u16 = 43;
 const SPV_INSTRUCTION_OP_FUNCTION_PARAMTER: u16 = 55;
 const SPV_INSTRUCTION_OP_FUNCTION_CALL: u16 = 57;
 const SPV_INSTRUCTION_OP_VARIABLE: u16 = 59;
 const SPV_INSTRUCTION_OP_LOAD: u16 = 61;
-const SPV_INSTRUCTION_OP_ACCESS_CHAIN: u16 = 65;
 const SPV_INSTRUCTION_OP_DECORATE: u16 = 71;
-const SPV_INSTRUCTION_OP_VECTOR_EXTRACT_DYNAMIC: u16 = 77;
 const SPV_INSTRUCTION_OP_SAMPLED_IMAGE: u16 = 86;
-const SPV_INSTRUCTION_OP_CONVERT_F_TO_I: u16 = 110;
-
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_IMPLICIT_LOD: u16 = 87;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_EXPLICIT_LOD: u16 = 88;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_DREF_IMPLICIT_LOD: u16 = 89;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_DREF_EXPLICIT_LOD: u16 = 90;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_IMPLICIT_LOD: u16 = 91;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_EXPLICIT_LOD: u16 = 92;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_DREF_IMPLICIT_LOD: u16 = 93;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_DREF_EXPLICIT_LOD: u16 = 94;
-const SPV_INSTRUCTION_OP_IMAGE_GATHER: u16 = 96;
-const SPV_INSTRUCTION_OP_IMAGE_DREF_GATHER: u16 = 97;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_IMPLICIT_LOD: u16 = 305;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_EXPLICIT_LOD: u16 = 306;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_IMPLICIT_LOD: u16 = 307;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_EXPLICIT_LOD: u16 = 308;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_IMPLICIT_LOD: u16 = 309;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_EXPLICIT_LOD: u16 = 310;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_DREF_IMPLICIT_LOD: u16 = 311;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_DREF_EXPLICIT_LOD: u16 = 312;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_GATHER: u16 = 314;
-const SPV_INSTRUCTION_OP_IMAGE_SPARSE_DREF_GATHER: u16 = 315;
-const SPV_INSTRUCTION_OP_IMAGE_SAMPLE_FOOTPRINT_NV: u16 = 5283;
 
 const SPV_STORAGE_CLASS_UNIFORM_CONSTANT: u32 = 0;
 const SPV_DECORATION_BINDING: u32 = 33;
 const SPV_DECORATION_DESCRIPTOR_SET: u32 = 34;
-const SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY: u32 = 5302;
-const SPV_EXT_DESCRIPTOR_INDEXING: [u32; 7] = [
-    1599492179, 1599363141, 1668506980, 1953524082, 1767862895, 2019910766, 6778473,
-];
 
 #[derive(Debug, Clone)]
 struct InstructionInsert {
@@ -142,16 +105,9 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let spv = spv.into_iter().skip(SPV_HEADER_LENGTH).collect::<Vec<_>>();
     let mut new_spv = spv.clone();
 
-    let mut has_arrayed_image = false;
-    let mut needs_op_capability_runtime_descriptor_array = true;
-    let mut op_capability_shader_idx = None;
     let mut op_type_sampler_idx = None;
     let mut first_op_deocrate_idx = None;
     let mut first_op_type_void_idx = None;
-
-    let mut op_constant_2_id = None;
-    let mut op_type_int_id = None;
-    let mut op_type_float_id = None;
 
     let mut op_type_image_idxs = vec![];
     let mut op_type_sampled_image_idxs = vec![];
@@ -162,8 +118,6 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut op_type_function_idxs = vec![];
     let mut op_function_parameter_idxs = vec![];
     let mut op_function_call_idxs = vec![];
-
-    let mut op_image_op_idxs = vec![];
 
     // 1. Find locations instructions we need
     let mut spv_idx = 0;
@@ -176,22 +130,11 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             SPV_INSTRUCTION_OP_TYPE_VOID => {
                 first_op_type_void_idx = Some(spv_idx);
             }
-            SPV_INSTRUCTION_OP_CAPABILITY => {
-                if spv[spv_idx + 1] == 1 {
-                    op_capability_shader_idx = Some(spv_idx);
-                } else if spv[spv_idx + 1] == SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY {
-                    needs_op_capability_runtime_descriptor_array = false;
-                }
-            }
             SPV_INSTRUCTION_OP_TYPE_SAMPLER => {
                 op_type_sampler_idx = Some(spv_idx);
                 new_spv[spv_idx] = encode_word(word_count, SPV_INSTRUCTION_OP_NOP);
             }
             SPV_INSTRUCTION_OP_TYPE_IMAGE => {
-                if spv[spv_idx + 5] != 0 {
-                    has_arrayed_image = true;
-                }
-
                 op_type_image_idxs.push(spv_idx);
             }
             SPV_INSTRUCTION_OP_TYPE_SAMPLED_IMAGE => op_type_sampled_image_idxs.push(spv_idx),
@@ -209,36 +152,6 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             SPV_INSTRUCTION_OP_TYPE_FUNCTION => op_type_function_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_FUNCTION_PARAMTER => op_function_parameter_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_FUNCTION_CALL => op_function_call_idxs.push(spv_idx),
-            SPV_INSTRUCTION_OP_CONSTANT => {
-                if spv[spv_idx + 3] == 2 {
-                    op_constant_2_id = Some(spv[spv_idx + 1]);
-                }
-            }
-            SPV_INSTRUCTION_OP_TYPE_INT => op_type_int_id = Some(spv[spv_idx + 1]),
-            SPV_INSTRUCTION_OP_TYPE_FLOAT => op_type_float_id = Some(spv[spv_idx + 1]),
-            SPV_INSTRUCTION_OP_IMAGE_SAMPLE_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_DREF_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_DREF_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_DREF_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_DREF_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_GATHER
-            | SPV_INSTRUCTION_OP_IMAGE_DREF_GATHER
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_DREF_IMPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_PROJ_DREF_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_GATHER
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_DREF_GATHER
-            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_FOOTPRINT_NV => {
-                op_image_op_idxs.push(spv_idx);
-            }
 
             _ => {}
         }
@@ -261,7 +174,6 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         op_type_sampler_res_id
     };
 
-    // For arrayed combined image sampler, use `op_type_pointer_arrayed_sampler_res_id`.
     let op_type_pointer_sampler_res_id = instruction_bound;
     instruction_bound += 1;
     instruction_inserts.push(InstructionInsert {
@@ -278,143 +190,45 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         ],
     });
 
-    // 3. Insert Instructions Needed for Arrayed Images
-    let arrayed_image_constants = if has_arrayed_image {
-        if needs_op_capability_runtime_descriptor_array {
-            instruction_inserts.push(InstructionInsert {
-                previous_spv_idx: op_capability_shader_idx.unwrap(),
-                instruction: vec![
-                    encode_word(2, SPV_INSTRUCTION_OP_CAPABILITY),
-                    SPV_CAPABILITY_RUNTIME_DESCRIPTOR_ARRAY,
-                    encode_word(
-                        1 + SPV_EXT_DESCRIPTOR_INDEXING.len() as u16,
-                        SPV_INSTRUCTION_OP_EXTENSION,
-                    ),
-                ]
-                .into_iter()
-                .chain(SPV_EXT_DESCRIPTOR_INDEXING)
-                .collect::<Vec<u32>>(),
-            });
-        }
-
-        let op_type_pointer_runtime_array_id = instruction_bound;
-        instruction_bound += 1;
-        let op_type_pointer_arrayed_sampler_res_id = instruction_bound;
-        instruction_bound += 1;
-        instruction_inserts.push(InstructionInsert {
-            // Let's avoid trouble and just insert after OpTypeVoid.
-            // previous_spv_idx: op_type_image_idx,
-            previous_spv_idx: first_op_type_void_idx.unwrap(),
-            instruction: vec![
-                encode_word(3, SPV_INSTRUCTION_OP_TYPE_RUNTIME_ARRAY),
-                op_type_pointer_runtime_array_id,
-                op_type_sampler_res_id,
-                encode_word(4, SPV_INSTRUCTION_OP_TYPE_POINTER),
-                op_type_pointer_arrayed_sampler_res_id,
-                SPV_STORAGE_CLASS_UNIFORM_CONSTANT,
-                op_type_pointer_runtime_array_id,
-            ],
-        });
-
-        let op_type_int_id = op_type_int_id.unwrap_or_else(|| {
-            let res_id = instruction_bound;
-            instruction_bound += 1;
-            instruction_inserts.push(InstructionInsert {
-                previous_spv_idx: first_op_type_void_idx.unwrap(),
-                instruction: vec![encode_word(4, SPV_INSTRUCTION_OP_TYPE_INT), res_id, 32, 1],
-            });
-            res_id
-        });
-
-        let op_type_float_id = op_type_float_id.unwrap_or_else(|| {
-            let res_id = instruction_bound;
-            instruction_bound += 1;
-            instruction_inserts.push(InstructionInsert {
-                previous_spv_idx: first_op_type_void_idx.unwrap(),
-                instruction: vec![encode_word(4, SPV_INSTRUCTION_OP_TYPE_FLOAT), res_id, 32, 1],
-            });
-            res_id
-        });
-
-        let op_constant_2_id = op_constant_2_id.unwrap_or_else(|| {
-            let res_id = instruction_bound;
-            instruction_bound += 1;
-            instruction_inserts.push(InstructionInsert {
-                previous_spv_idx: first_op_type_void_idx.unwrap(),
-                instruction: vec![
-                    encode_word(4, SPV_INSTRUCTION_OP_CONSTANT),
-                    op_type_int_id,
-                    res_id,
-                    2,
-                ],
-            });
-            res_id
-        });
-        Some((
-            op_type_pointer_arrayed_sampler_res_id,
-            op_type_int_id,
-            op_type_float_id,
-            op_constant_2_id,
-        ))
-    } else {
-        None
-    };
-
-    // 4. OpTypePointer
+    // 3. OpTypePointer
     let tp_res = type_pointer(TypePointerIn {
         spv: &spv,
         new_spv: &mut new_spv,
 
-        op_type_image_idxs: &op_type_image_idxs,
         op_type_pointer_idxs: &op_type_pointer_idxs,
         op_type_sampled_image_idxs: &op_type_sampled_image_idxs,
     });
 
-    // 5. OpVariable
+    // 4. OpVariable
     let v_res = variable(VariableIn {
         spv: &spv,
         instruction_bound: &mut instruction_bound,
         instruction_inserts: &mut instruction_inserts,
         op_type_pointer_sampler_res_id,
-        op_type_pointer_arrayed_sampler_res_id: arrayed_image_constants.map(
-            |(op_type_pointer_arrayed_sampler_res_id, _, _, _)| {
-                op_type_pointer_arrayed_sampler_res_id
-            },
-        ),
         op_variables_idxs: &op_variables_idxs,
         tp_res: &tp_res,
     });
 
-    // 6. OpTypeFunction
+    // 5. OpTypeFunction
     type_function(TypeFunctionIn {
         spv: &spv,
         word_inserts: &mut word_inserts,
         op_type_pointer_sampler_res_id,
-        op_type_pointer_arrayed_sampler_res_id: arrayed_image_constants.map(
-            |(op_type_pointer_arrayed_sampler_res_id, _, _, _)| {
-                op_type_pointer_arrayed_sampler_res_id
-            },
-        ),
         op_type_function_idxs: &op_type_function_idxs,
         tp_res: &tp_res,
     });
 
-    // 7. OpFunctionParameter
+    // 6. OpFunctionParameter
     let parameter_res = function_parameter(FunctionParameterIn {
         spv: &spv,
         instruction_bound: &mut instruction_bound,
         instruction_inserts: &mut instruction_inserts,
         op_type_pointer_sampler_res_id,
-        op_type_pointer_arrayed_sampler_res_id: arrayed_image_constants.map(
-            |(op_type_pointer_arrayed_sampler_res_id, _, _, _)| {
-                op_type_pointer_arrayed_sampler_res_id
-            },
-        ),
         op_function_parameter_idxs: &op_function_parameter_idxs,
         tp_res: &tp_res,
     });
 
-    // 8. OpFunctionCall
+    // 7. OpFunctionCall
     function_call(FunctionCallIn {
         spv: &spv,
         word_inserts: &mut word_inserts,
@@ -423,8 +237,8 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         parameter_res: &parameter_res,
     });
 
-    // 9. OpLoad
-    load(Load {
+    // 8. OpLoad
+    load(LoadIn {
         spv: &spv,
         new_spv: &mut new_spv,
         instruction_bound: &mut instruction_bound,
@@ -435,26 +249,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         parameter_res: &parameter_res,
     });
 
-    // 10. OpImage...
-    if let Some((_, op_type_int_id, op_type_float_id, op_constant_2_id)) = arrayed_image_constants {
-        image_op(ImageOp {
-            spv: &spv,
-            new_spv: &mut new_spv,
-            instruction_bound: &mut instruction_bound,
-            instruction_inserts: &mut instruction_inserts,
-            op_type_int_id,
-            op_type_float_id,
-            op_constant_2_id,
-            op_type_sampler_res_id,
-            op_type_pointer_sampler_res_id,
-            op_loads_idxs: &op_loads_idxs,
-            op_image_op_idxs: &op_image_op_idxs,
-            v_res: &v_res,
-            parameter_res: &parameter_res,
-        });
-    }
-
-    // 11. OpDecorate
+    // 9. OpDecorate
     let DecorateOut {
         descriptor_sets_to_correct,
     } = decorate(DecorateIn {
@@ -465,7 +260,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         v_res: &v_res,
     });
 
-    // 12. Insert New Instructions
+    // 10. Insert New Instructions
     enum Insert {
         Word(WordInsert),
         Instruction(InstructionInsert),
@@ -500,7 +295,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         }
     });
 
-    // 13. Correct OpDecorate Bindings
+    // 11. Correct OpDecorate Bindings
     let mut candidates = HashMap::new();
 
     let mut d_idx = 0;
@@ -564,7 +359,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         }
     }
 
-    // 14. Remove Instructions that have been Whited Out.
+    // 12. Remove Instructions that have been Whited Out.
 
     let mut i_idx = 0;
     while i_idx < new_spv.len() {
@@ -581,7 +376,7 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         }
     }
 
-    // 15. Write New Header and New Code
+    // 13. Write New Header and New Code
     spv_header[SPV_HEADER_INSTRUCTION_BOUND_OFFSET] = instruction_bound;
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);

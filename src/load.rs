@@ -1,6 +1,6 @@
 use super::*;
 
-pub struct Load<'a> {
+pub struct LoadIn<'a> {
     pub spv: &'a [u32],
     pub new_spv: &'a mut [u32],
     pub instruction_bound: &'a mut u32,
@@ -13,8 +13,8 @@ pub struct Load<'a> {
     pub parameter_res: &'a [FunctionParameterOut],
 }
 
-pub fn load(l_in: Load) {
-    let Load {
+pub fn load(l_in: LoadIn) {
+    let LoadIn {
         spv,
         new_spv,
         instruction_bound,
@@ -34,10 +34,9 @@ pub fn load(l_in: Load) {
                      v_res_id,
                      new_sampler_v_res_id,
                      underlying_image_id,
-                     is_array,
                      ..
                  }| {
-                    (!is_array && v_res_id == spv[l_idx + 3]).then_some((
+                    (v_res_id == spv[l_idx + 3]).then_some((
                         l_idx,
                         new_sampler_v_res_id,
                         underlying_image_id,
@@ -52,10 +51,9 @@ pub fn load(l_in: Load) {
                      image_parameter_res_id,
                      sampler_parameter_res_id,
                      underlying_image_id,
-                     is_array,
                      ..
                  }| {
-                    (!is_array && *image_parameter_res_id == spv[l_idx + 3]).then_some((
+                    (*image_parameter_res_id == spv[l_idx + 3]).then_some((
                         l_idx,
                         *sampler_parameter_res_id,
                         *underlying_image_id,
