@@ -34,7 +34,7 @@ layout(set = 0, binding = 3) uniform sampler u_sampler_array[];
 | `test.frag`         | ✅     |                                                                                                                                  |
 | `test_nested.frag`  | ✅     |                                                                                                                                  |
 | `test_arrayed.frag` | 🆗     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) Requires simple mod                                        |
-| `test_mixed.frag`   | ❌     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) and [WGPU #6523](https://github.com/gfx-rs/wgpu/pull/6523) |                |
+| `test_mixed.frag`   | ❌     | [#1](https://github.com/davnotdev/spirv_combimgsampsplitter/issues/1) and [WGPU #6523](https://github.com/gfx-rs/wgpu/pull/6523) |
 
 ### Tint
 
