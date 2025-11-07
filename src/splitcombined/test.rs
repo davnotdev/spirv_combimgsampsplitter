@@ -19,7 +19,7 @@ fn try_spv_to_wgsl(spv: &[u8]) {
 
 #[test]
 fn spv_test() {
-    let spv = include_bytes!("../test/test.spv");
+    let spv = include_bytes!("./test/test.spv");
     let spv = u8_slice_to_u32_vec(spv);
     let out_spv = combimgsampsplitter(&spv).unwrap();
     let out_spv = u32_slice_to_u8_vec(&out_spv);
@@ -28,7 +28,7 @@ fn spv_test() {
 
 #[test]
 fn spv_test_arrayed() {
-    let spv = include_bytes!("../test/test_arrayed.spv");
+    let spv = include_bytes!("./test/test_arrayed.spv");
     let spv = u8_slice_to_u32_vec(spv);
     let out_spv = combimgsampsplitter(&spv).unwrap();
     let out_spv = u32_slice_to_u8_vec(&out_spv);
@@ -37,7 +37,7 @@ fn spv_test_arrayed() {
 
 #[test]
 fn spv_test_nested() {
-    let spv = include_bytes!("../test/test_nested.spv");
+    let spv = include_bytes!("./test/test_nested.spv");
     let spv = u8_slice_to_u32_vec(spv);
     let out_spv = combimgsampsplitter(&spv).unwrap();
     let out_spv = u32_slice_to_u8_vec(&out_spv);
@@ -47,7 +47,7 @@ fn spv_test_nested() {
 
 #[test]
 fn spv_test_mixed() {
-    let spv = include_bytes!("../test/test_mixed.spv");
+    let spv = include_bytes!("./test/test_mixed.spv");
     let spv = u8_slice_to_u32_vec(spv);
     let out_spv = combimgsampsplitter(&spv).unwrap();
     let out_spv = u32_slice_to_u8_vec(&out_spv);
