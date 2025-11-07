@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 mod splitcombined;
+mod splitdref;
 mod spv;
 mod util;
 
