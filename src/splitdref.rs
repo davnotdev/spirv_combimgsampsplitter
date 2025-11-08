@@ -41,11 +41,14 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut new_spv = spv.clone();
 
     // 1. Find locations instructions we need
+    let mut first_op_deocrate_idx = None;
+
     let mut op_dref_operation_idxs = vec![];
     let mut op_sampled_operation_idxs = vec![];
     let mut op_sampled_image_idxs = vec![];
     let mut op_load_idxs = vec![];
     let mut op_variable_idxs = vec![];
+    let mut op_decorate_idxs = vec![];
 
     let mut spv_idx = 0;
     while spv_idx < spv.len() {
@@ -75,6 +78,10 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 op_sampled_operation_idxs.push(spv_idx);
             }
             SPV_INSTRUCTION_OP_VARIABLE => op_variable_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_DECORATE => {
+                op_decorate_idxs.push(spv_idx);
+                first_op_deocrate_idx.get_or_insert(spv_idx);
+            }
             _ => {}
         }
 
@@ -146,6 +153,8 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
+    let mut affected_variables = Vec::new();
+
     for (&variable_idx, &op_load_idx) in patch_variable_idxs {
         let word_count = hiword(spv[variable_idx]);
 
@@ -166,13 +175,36 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             word: new_variable_id,
             head_idx: op_load_idx,
         });
+
+        affected_variables.push(util::DecorationVariable {
+            original_res_id: spv[variable_idx + 2],
+            new_res_id: new_variable_id,
+        });
     }
 
     // 6. Insert new OpDecorate
+    let DecorateOut {
+        descriptor_sets_to_correct,
+    } = util::decorate(DecorateIn {
+        spv: &spv,
+        instruction_inserts: &mut instruction_inserts,
+        first_op_deocrate_idx,
+        op_decorate_idxs: &op_decorate_idxs,
+        affected_variables: &affected_variables,
+    });
 
-    // Remove Instructions that have been Whited Out.
+    // 7. Insert New Instructions
+    insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
+
+    // 8. Correct OpDecorate Bindings
+    util::correct_decorate(CorrectDecorateIn {
+        new_spv: &mut new_spv,
+        descriptor_sets_to_correct,
+    });
+
+    // 9. Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);
 
-    // Write New Header and New Code
+    // 10. Write New Header and New Code
     Ok(fuse_final(spv_header, new_spv, instruction_bound))
 }
