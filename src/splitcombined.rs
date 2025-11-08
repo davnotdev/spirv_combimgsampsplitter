@@ -1,6 +1,5 @@
 use super::*;
 
-mod decorate;
 mod function_call;
 mod function_parameter;
 mod load;
@@ -11,7 +10,6 @@ mod variable;
 #[cfg(test)]
 mod test;
 
-use decorate::*;
 use function_call::*;
 use function_parameter::*;
 use load::*;
@@ -184,80 +182,36 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     // 9. OpDecorate
     let DecorateOut {
         descriptor_sets_to_correct,
-    } = decorate(DecorateIn {
+    } = util::decorate(DecorateIn {
         spv: &spv,
         instruction_inserts: &mut instruction_inserts,
         first_op_deocrate_idx,
         op_decorate_idxs: &op_decorate_idxs,
-        v_res: &v_res,
+        affected_variables: &v_res
+            .iter()
+            .map(
+                |VariableOut {
+                     v_res_id,
+                     new_sampler_v_res_id,
+                     ..
+                 }| {
+                    util::DecorationVariable {
+                        original_res_id: *v_res_id,
+                        new_res_id: *new_sampler_v_res_id,
+                    }
+                },
+            )
+            .collect::<Vec<_>>(),
     });
 
     // 10. Insert New Instructions
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
     // 11. Correct OpDecorate Bindings
-    let mut candidates = HashMap::new();
-
-    let mut d_idx = 0;
-    while d_idx < new_spv.len() {
-        let op = new_spv[d_idx];
-        let word_count = hiword(op);
-        let instruction = loword(op);
-        if instruction == SPV_INSTRUCTION_OP_DECORATE {
-            match new_spv[d_idx + 2] {
-                SPV_DECORATION_DESCRIPTOR_SET => {
-                    candidates
-                        .entry(new_spv[d_idx + 1])
-                        .or_insert((None, None))
-                        .0 = Some(new_spv[d_idx + 3])
-                }
-                SPV_DECORATION_BINDING => {
-                    candidates
-                        .entry(new_spv[d_idx + 1])
-                        .or_insert((None, None))
-                        .1 = Some((d_idx, new_spv[d_idx + 3]))
-                }
-                _ => {}
-            }
-        }
-
-        d_idx += word_count as usize;
-    }
-
-    for descriptor_set in descriptor_sets_to_correct {
-        let mut bindings = candidates
-            .iter()
-            .filter_map(|(_, &(maybe_descriptor_set, maybe_binding))| {
-                let this_descriptor_set = maybe_descriptor_set.unwrap();
-                let (binding_idx, this_binding) = maybe_binding.unwrap();
-                (this_descriptor_set == descriptor_set).then_some((binding_idx, this_binding))
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_by_cached_key(|&(_, binding)| binding);
-
-        // We can assume that our new samplers will have a greater instruction ID than the original
-        // conbined image samplers.
-        let mut prev_binding = -1;
-        let mut prev_id = -1;
-        let mut prev_d_idx = -1;
-        let mut increment = 0;
-        for (d_idx, binding) in bindings {
-            let this_id = new_spv[d_idx + 1];
-
-            if binding as i32 == prev_binding {
-                increment += 1;
-
-                if prev_id <= this_id as i32 {
-                    new_spv[prev_d_idx as usize + 3] += 1;
-                    new_spv[d_idx + 3] -= 1;
-                }
-            }
-            new_spv[d_idx + 3] += increment;
-            prev_binding = binding as i32;
-            prev_id = this_id as i32;
-            prev_d_idx = d_idx as isize;
-        }
-    }
+    util::correct_decorate(CorrectDecorateIn {
+        new_spv: &mut new_spv,
+        descriptor_sets_to_correct,
+    });
 
     // 12. Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);

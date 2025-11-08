@@ -1,5 +1,11 @@
 use super::*;
 
+mod decorate;
+mod correct_decorate;
+
+pub use decorate::*;
+pub use correct_decorate::*;
+
 pub fn hiword(value: u32) -> u16 {
     ((value >> 16) & 0xFFFF) as u16
 }
