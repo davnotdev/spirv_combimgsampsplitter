@@ -41,9 +41,11 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut new_spv = spv.clone();
 
     // 1. Find locations instructions we need
-    let mut op_dref_idxs = vec![];
+    let mut op_dref_operation_idxs = vec![];
+    let mut op_sampled_operation_idxs = vec![];
     let mut op_sampled_image_idxs = vec![];
     let mut op_load_idxs = vec![];
+    let mut op_variable_idxs = vec![];
 
     let mut spv_idx = 0;
     while spv_idx < spv.len() {
@@ -61,13 +63,112 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             | SPV_INSTRUCTION_OP_IMAGE_DREF_GATHER
             | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_IMPLICIT_LOD
             | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_DREF_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_DREF_GATHER => op_dref_idxs.push(spv_idx),
-
+            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_DREF_GATHER => op_dref_operation_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_IMAGE_SAMPLE_IMPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_EXPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_IMPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_SAMPLE_PROJ_EXPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_GATHER
+            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_IMPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_EXPLICIT_LOD
+            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_GATHER => {
+                op_sampled_operation_idxs.push(spv_idx);
+            }
+            SPV_INSTRUCTION_OP_VARIABLE => op_variable_idxs.push(spv_idx),
             _ => {}
         }
 
         spv_idx += word_count as usize;
     }
+
+    // 2. Find sampled images that mix operations
+    let mut sampled_image_mixing_status: HashMap<u32, (bool, bool)> = HashMap::new();
+
+    for idx in op_sampled_operation_idxs {
+        // Conveniently, the offset for this value is always +3.
+        let loaded_sampled_image_id = spv[idx + 3];
+        let entry = sampled_image_mixing_status
+            .entry(loaded_sampled_image_id)
+            .or_insert((false, false));
+
+        entry.0 = true;
+    }
+    for idx in op_dref_operation_idxs {
+        // Conveniently, the offset for this value is always +3.
+        let loaded_sampled_image_id = spv[idx + 3];
+        let entry = sampled_image_mixing_status
+            .entry(loaded_sampled_image_id)
+            .or_insert((false, false));
+
+        entry.1 = true;
+    }
+
+    let mixed_loaded_sampled_image_ids = sampled_image_mixing_status
+        .into_iter()
+        .filter_map(|(id, (uses_regular, uses_dref))| (uses_regular && uses_dref).then_some(id))
+        .collect::<Vec<_>>();
+
+    // 3. Backtrack to find the OpSampledImage that resulted in our loaded sampled images
+    let mixed_loaded_image_ids = op_sampled_image_idxs
+        .iter()
+        .filter_map(|idx| {
+            let sampled_result_id = spv[idx + 3];
+            let loaded_image_id = spv[idx + 4];
+            mixed_loaded_sampled_image_ids
+                .contains(&sampled_result_id)
+                .then_some(loaded_image_id)
+        })
+        .collect::<Vec<_>>();
+
+    // 4. Backtrack to find the OpLoad that resulted in our loaded images
+    let mixed_image_ids = op_load_idxs
+        .iter()
+        .filter_map(|idx| {
+            let loaded_result_id = spv[idx + 2];
+            let original_image = spv[idx + 3];
+            mixed_loaded_image_ids
+                .contains(&loaded_result_id)
+                .then_some((original_image, idx))
+        })
+        .collect::<Vec<_>>();
+
+    // 5. Duplicate OpVariable with a new_id and patch old OpLoad
+    // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
+    // check that its result isn't used for both regular and dref operations!
+    let patch_variable_idxs = op_variable_idxs
+        .iter()
+        .filter_map(|idx| {
+            let result_id = spv[idx + 2];
+            mixed_image_ids
+                .iter()
+                .find_map(|(id, op_load_idx)| (*id == result_id).then_some(*op_load_idx))
+                .map(|op_load_idx| (idx, op_load_idx))
+        })
+        .collect::<Vec<_>>();
+
+    for (&variable_idx, &op_load_idx) in patch_variable_idxs {
+        let word_count = hiword(spv[variable_idx]);
+
+        // OpVariable
+        let new_variable_id = instruction_bound;
+        instruction_bound += 1;
+        let mut new_variable = Vec::new();
+        new_variable.copy_from_slice(&spv[variable_idx..variable_idx + word_count as usize]);
+        new_variable[2] = new_variable_id;
+        instruction_inserts.push(InstructionInsert {
+            previous_spv_idx: variable_idx,
+            instruction: new_variable,
+        });
+
+        // OpLoad
+        word_inserts.push(WordInsert {
+            idx: op_load_idx + 3,
+            word: new_variable_id,
+            head_idx: op_load_idx,
+        });
+    }
+
+    // 6. Insert new OpDecorate
 
     // Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);
