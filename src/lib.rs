@@ -5,10 +5,14 @@ mod splitdref;
 mod spv;
 mod util;
 
+#[cfg(test)]
+mod test;
+
 use spv::*;
 use util::*;
 
 pub use splitcombined::*;
+pub use splitdref::*;
 
 #[derive(Debug, Clone)]
 struct InstructionInsert {

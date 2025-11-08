@@ -7,9 +7,6 @@ mod type_function;
 mod type_pointer;
 mod variable;
 
-#[cfg(test)]
-mod test;
-
 use function_call::*;
 use function_parameter::*;
 use load::*;
