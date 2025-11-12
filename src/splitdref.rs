@@ -19,7 +19,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     assert_eq!(magic_number, SPV_HEADER_MAGIC);
 
     let mut instruction_inserts: Vec<InstructionInsert> = vec![];
-    let mut word_inserts: Vec<WordInsert> = vec![];
+    let word_inserts: Vec<WordInsert> = vec![];
 
     let spv = spv.into_iter().skip(SPV_HEADER_LENGTH).collect::<Vec<_>>();
     let mut new_spv = spv.clone();
@@ -116,11 +116,13 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
     for (id, load_idx, ty) in image_ids {
         let entry = mixed_image_ids.entry(id).or_insert((false, false));
-        image_id_to_loads.entry(id).or_insert(vec![]).push(load_idx);
 
         match ty {
             OperationVariant::Regular => entry.0 = true,
-            OperationVariant::Dref => entry.1 = true,
+            OperationVariant::Dref => {
+                entry.1 = true;
+                image_id_to_loads.entry(id).or_insert(vec![]).push(load_idx);
+            }
         }
     }
 
@@ -167,11 +169,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         // OpLoad
         if let Some(op_load_idxs) = image_id_to_loads.get(&old_variable_id) {
             for &op_load_idx in op_load_idxs {
-                word_inserts.push(WordInsert {
-                    idx: op_load_idx + 3,
-                    word: new_variable_id,
-                    head_idx: *op_load_idx,
-                });
+                new_spv[op_load_idx + 3] = new_variable_id
             }
         }
     }
