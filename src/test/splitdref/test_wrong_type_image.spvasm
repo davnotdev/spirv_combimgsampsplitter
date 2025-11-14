@@ -1,0 +1,81 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Google Shaderc over Glslang; 11
+; Bound: 44
+; Schema: 0
+
+; This sample is identical to test.spv, but OpTypeImage with depth=1 does not exist.
+; This is valid SPIRV, so we should handle this case.
+
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint Fragment %main "main"
+               OpExecutionMode %main OriginUpperLeft
+               OpSource GLSL 450
+               OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+               OpSourceExtension "GL_GOOGLE_include_directive"
+               OpName %main "main"
+               OpName %g0 "g0"
+               OpName %u_mixed_texture "u_mixed_texture"
+               OpName %u_comparison_sampler "u_comparison_sampler"
+               OpName %g1 "g1"
+               OpName %u_regular_sampler "u_regular_sampler"
+               OpName %g2 "g2"
+               OpName %u_other_b "u_other_b"
+               OpName %u_other_a "u_other_a"
+               OpDecorate %u_mixed_texture Binding 2
+               OpDecorate %u_mixed_texture DescriptorSet 0
+               OpDecorate %u_comparison_sampler Binding 1
+               OpDecorate %u_comparison_sampler DescriptorSet 0
+               OpDecorate %u_regular_sampler Binding 0
+               OpDecorate %u_regular_sampler DescriptorSet 0
+               OpDecorate %u_other_b Binding 4
+               OpDecorate %u_other_b DescriptorSet 0
+               OpDecorate %u_other_a Binding 3
+               OpDecorate %u_other_a DescriptorSet 0
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+      %float = OpTypeFloat 32
+%_ptr_Function_float = OpTypePointer Function %float
+          %9 = OpTypeImage %float 2D 0 0 0 1 Unknown
+%_ptr_UniformConstant_9 = OpTypePointer UniformConstant %9
+%u_mixed_texture = OpVariable %_ptr_UniformConstant_9 UniformConstant
+         %13 = OpTypeSampler
+%_ptr_UniformConstant_13 = OpTypePointer UniformConstant %13
+%u_comparison_sampler = OpVariable %_ptr_UniformConstant_13 UniformConstant
+    %v4float = OpTypeVector %float 4
+    %float_0 = OpConstant %float 0
+         %22 = OpConstantComposite %v4float %float_0 %float_0 %float_0 %float_0
+%_ptr_Function_v4float = OpTypePointer Function %v4float
+%u_regular_sampler = OpVariable %_ptr_UniformConstant_13 UniformConstant
+         %32 = OpTypeSampledImage %9
+    %v2float = OpTypeVector %float 2
+         %35 = OpConstantComposite %v2float %float_0 %float_0
+  %u_other_b = OpVariable %_ptr_UniformConstant_9 UniformConstant
+  %u_other_a = OpVariable %_ptr_UniformConstant_9 UniformConstant
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+         %g0 = OpVariable %_ptr_Function_float Function
+         %g1 = OpVariable %_ptr_Function_v4float Function
+         %g2 = OpVariable %_ptr_Function_v4float Function
+         %12 = OpLoad %9 %u_mixed_texture
+         %16 = OpLoad %13 %u_comparison_sampler
+         %19 = OpSampledImage %32 %12 %16
+         %23 = OpCompositeExtract %float %22 2
+         %24 = OpCompositeExtract %float %22 3
+         %25 = OpCompositeInsert %v4float %24 %22 2
+         %26 = OpImageSampleProjDrefImplicitLod %float %19 %25 %23
+               OpStore %g0 %26
+         %29 = OpLoad %9 %u_mixed_texture
+         %31 = OpLoad %13 %u_regular_sampler
+         %33 = OpSampledImage %32 %29 %31
+         %36 = OpImageSampleExplicitLod %v4float %33 %35 Lod %float_0
+               OpStore %g1 %36
+         %39 = OpLoad %9 %u_other_b
+         %40 = OpLoad %13 %u_regular_sampler
+         %41 = OpSampledImage %32 %39 %40
+         %42 = OpImageSampleExplicitLod %v4float %41 %35 Lod %float_0
+               OpStore %g2 %42
+               OpReturn
+               OpFunctionEnd

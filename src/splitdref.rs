@@ -1,32 +1,5 @@
 use super::*;
 
-/*
-
-1. find opcodes
-2. find all loaded sampled images from sampled operations
-3. find OpSampledImage
-4. find OpLoad
-5. find mismatch operations
-6. find OpVariable
-7. find OpTypePointer
-    - if missing, create placeholder
-8. find OpTypeImage
-    - if missing, create new
-    - substitute into OpTypePointer placeholders
-9. find OpTypeSampledImage
-    - if missing, substitute with new OpTypeImage
-10. Substitute
-    - create new OpVariable (with OpTypePointer)
-    - substitute OpLoad (with OpVariable and OpTypeImage)
-    - substitute
-11. OpDecorate
-12. Insert new instructions
-13. correct decorations
-14. prune no-ops
-15 write new header and code
-
-*/
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperationVariant {
     Regular,
@@ -295,7 +268,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
-    // 5. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage
+    // 9. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage
     // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
     // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
@@ -334,9 +307,13 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 };
             }
         }
+
+        // OpSampledImage
+        // NOTE: We did not patch in a new OpSampledImage and OpTypeSampledImage.
+        // Thankfully, it seems that `spirv-val`, `naga`, nor `tint` seem to care.
     }
 
-    // 6. Insert new OpDecorate
+    // 10. Insert new OpDecorate
     let DecorateOut {
         descriptor_sets_to_correct,
     } = util::decorate(DecorateIn {
@@ -347,18 +324,18 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         affected_variables: &affected_variables,
     });
 
-    // 7. Insert New Instructions
+    // 11. Insert New Instructions
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
-    // 8. Correct OpDecorate Bindings
+    // 12. Correct OpDecorate Bindings
     util::correct_decorate(CorrectDecorateIn {
         new_spv: &mut new_spv,
         descriptor_sets_to_correct,
     });
 
-    // 9. Remove Instructions that have been Whited Out.
+    // 13. Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);
 
-    // 10. Write New Header and New Code
+    // 14. Write New Header and New Code
     Ok(fuse_final(spv_header, new_spv, instruction_bound))
 }
