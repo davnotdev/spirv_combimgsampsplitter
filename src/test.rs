@@ -63,3 +63,15 @@ test_with_spv_and_fn!(
     "./test/splitdref/test_wrong_type_image.spv",
     dreftexturesplitter
 );
+
+test_with_spv_and_fn!(
+    splitdref_test_nested,
+    "./test/splitdref/test_nested.spv",
+    dreftexturesplitter
+);
+
+test_with_spv_and_fn!(
+    splitdref_test_nested2,
+    "./test/splitdref/test_nested2.spv",
+    dreftexturesplitter
+);

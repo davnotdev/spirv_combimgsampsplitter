@@ -6,6 +6,12 @@ enum OperationVariant {
     Dref,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadType {
+    Variable,
+    FunctionArgument,
+}
+
 /// Perform the operation on a `Vec<u32>`.
 /// Use [u8_slice_to_u32_vec] to convert a `&[u8]` into a `Vec<u32>`
 pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
@@ -33,6 +39,10 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut op_decorate_idxs = vec![];
     let mut op_type_image_idxs = vec![];
     let mut op_type_pointer_idxs = vec![];
+    let mut op_type_function_idxs = vec![];
+    let mut op_function_idxs = vec![];
+    let mut op_function_call_idxs = vec![];
+    let mut op_function_parameter_idxs = vec![];
 
     let mut spv_idx = 0;
     while spv_idx < spv.len() {
@@ -63,6 +73,10 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             SPV_INSTRUCTION_OP_DECORATE => op_decorate_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_TYPE_IMAGE => op_type_image_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_TYPE_POINTER => op_type_pointer_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_TYPE_FUNCTION => op_type_function_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_FUNCTION => op_function_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_FUNCTION_CALL => op_function_call_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_FUNCTION_PARAMTER => op_function_parameter_idxs.push(spv_idx),
             _ => {}
         }
 
@@ -70,7 +84,6 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     }
 
     let first_op_deocrate_idx = op_decorate_idxs.first().copied();
-    let last_op_type_image = op_type_image_idxs.last().copied();
 
     // 2. Collect all the loaded sampled images of both operation types
     // Conveniently, the offset for this value is always +3 for all of these operations
@@ -135,32 +148,98 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .collect::<Vec<_>>();
 
     // 6. Find the OpVariable of the mismatched images
+    let filter_map_mixed_image_ids_for_access = |idx: &usize| {
+        let result_id = spv[*idx + 2];
+        mixed_image_ids
+            .iter()
+            .find(|id| **id == result_id)
+            .map(|_| *idx)
+    };
     let patch_variable_idxs = op_variable_idxs
         .iter()
-        .filter_map(|idx| {
-            let result_id = spv[idx + 2];
-            mixed_image_ids
-                .iter()
-                .find(|id| **id == result_id)
-                .map(|_| idx)
+        .filter_map(filter_map_mixed_image_ids_for_access)
+        .collect::<Vec<_>>();
+
+    // 6. Find OpFunctionParameter of the mismatched images
+    let patch_function_parameter_idxs = op_function_parameter_idxs
+        .iter()
+        .filter_map(filter_map_mixed_image_ids_for_access)
+        .collect::<Vec<_>>();
+
+    // 7. Find OpFunction of OpFunctionParameter by tracing backwards
+    let patch_function_idxs = patch_function_parameter_idxs
+        .iter()
+        .map(|&idx| {
+            let mut spv_idx = idx;
+            let mut param_idx = 0;
+            loop {
+                let op = spv[spv_idx];
+                let word_count = hiword(op);
+                let instruction = loword(op);
+                match instruction {
+                    SPV_INSTRUCTION_OP_FUNCTION_PARAMTER => {
+                        spv_idx -= word_count as usize;
+                        param_idx += 1;
+                    }
+                    SPV_INSTRUCTION_OP_FUNCTION => return (spv_idx, param_idx),
+                    _ => panic!(
+                        "Expected OpFunction or OpFunctionParameter, got {}",
+                        instruction
+                    ),
+                }
+            }
         })
         .collect::<Vec<_>>();
 
+    // 8. Find the OpVariable that eventually reaches OpFunctionCall of our OpFunctions
+    // Because functions may be deeply nested, we'll have to account for other OpFunctionCalls
+    let function_call_trace_argument_to_variable = |argument_id: u32| -> Option<usize> {
+        // TODO: The worse part is that there can be other types of functions too!
+        todo!()
+        // op_variable_idxs
+        //     .iter()
+        //     .find(|&&idx| spv[idx + 2] == argument_id)
+        //     .or(op_function_call_idxs
+        //         .iter()
+        //         .find(|&&idx| spv[idx + 2] == argument_id).map(|&&idx|));
+        // None
+    };
+
+    let function_variable_idxs = patch_function_idxs.iter().filter_map(|&(idx, param_idx)| {
+        let result_id = spv[idx + 2];
+        op_function_call_idxs
+            .iter()
+            .find(|&&idx| {
+                let function_id = spv[idx + 3];
+                function_id == result_id
+            })
+            .and_then(|idx| {
+                let argument_id = spv[idx + 4 + param_idx];
+                function_call_trace_argument_to_variable(argument_id)
+            })
+    });
+
+    let patch_variable_idxs = patch_variable_idxs
+        .iter()
+        .copied()
+        .map(|idx| (idx, LoadType::Variable))
+        .chain(function_variable_idxs.map(|idx| (idx, LoadType::FunctionArgument)));
+
     // 7. Find OpTypePointer that resulted in OpVariable
-    let patch_variable_idxs = patch_variable_idxs.iter().map(|&&variable_idx| {
+    let patch_variable_idxs = patch_variable_idxs.map(|(variable_idx, lty)| {
         let type_pointer_id = spv[variable_idx + 1];
         let maybe_tp_idx = op_type_pointer_idxs.iter().find(|&tp_idx| {
             let tp_id = spv[tp_idx + 1];
             type_pointer_id == tp_id
         });
-        (variable_idx, maybe_tp_idx.copied())
+        (variable_idx, lty, maybe_tp_idx.copied())
     });
 
     // 8. Find OpTypeImage that resulted in OpTypePointer
     //    We also want to create an complement OpTypeImage (depth=!depth) (without duplicates) and
     //    a respective OpTypePointer and OpTypeSampledImage pair (also no duplicates).
     let patch_variable_idxs = patch_variable_idxs
-        .map(|(variable_idx, tp_idx)| {
+        .map(|(variable_idx, lty, tp_idx)| {
             let variable_result_id = spv[variable_idx];
             let image_type_id = if let Some(tp_idx) = tp_idx {
                 // type_image_id
@@ -260,6 +339,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
             (
                 variable_idx,
+                lty,
                 ti_id,
                 complement_tp_id,
                 complement_ti_id,
@@ -273,7 +353,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
 
-    for (variable_idx, original_ti_id, complement_tp_id, complement_ti_id, complement_ty) in
+    for (variable_idx, lty, original_ti_id, complement_tp_id, complement_ti_id, complement_ty) in
         patch_variable_idxs
     {
         // OpVariable
@@ -295,16 +375,24 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         });
 
         // OpLoad
-        let old_variable_id = spv[variable_idx + 2];
-        if let Some(op_load_idxs) = image_id_to_loads.get(&old_variable_id) {
-            for &(op_load_idx, ty) in op_load_idxs {
-                if **ty == complement_ty {
-                    new_spv[op_load_idx + 1] = complement_ti_id;
-                    new_spv[op_load_idx + 3] = new_variable_id;
-                } else {
-                    new_spv[op_load_idx + 1] = original_ti_id;
-                    new_spv[op_load_idx + 3] = old_variable_id;
-                };
+        match lty {
+            LoadType::Variable => {
+                let old_variable_id = spv[variable_idx + 2];
+                if let Some(op_load_idxs) = image_id_to_loads.get(&old_variable_id) {
+                    for &(op_load_idx, ty) in op_load_idxs {
+                        if **ty == complement_ty {
+                            new_spv[op_load_idx + 1] = complement_ti_id;
+                            new_spv[op_load_idx + 3] = new_variable_id;
+                        } else {
+                            new_spv[op_load_idx + 1] = original_ti_id;
+                            new_spv[op_load_idx + 3] = old_variable_id;
+                        };
+                    }
+                }
+            }
+            LoadType::FunctionArgument => {
+                // TODO: Patch OpLoad to new FunctionArgument
+                todo!()
             }
         }
 
@@ -312,6 +400,9 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         // NOTE: We did not patch in a new OpSampledImage and OpTypeSampledImage.
         // Thankfully, it seems that `spirv-val`, `naga`, nor `tint` seem to care.
     }
+
+    // TODO: Patch OpTypeFunction to include complement image
+    // TODO: Patch OpFunctionParameter to include complement image
 
     // 10. Insert new OpDecorate
     let DecorateOut {
