@@ -1,6 +1,33 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy)]
+/*
+
+1. find opcodes
+2. find all loaded sampled images from sampled operations
+3. find OpSampledImage
+4. find OpLoad
+5. find mismatch operations
+6. find OpVariable
+7. find OpTypePointer
+    - if missing, create placeholder
+8. find OpTypeImage
+    - if missing, create new
+    - substitute into OpTypePointer placeholders
+9. find OpTypeSampledImage
+    - if missing, substitute with new OpTypeImage
+10. Substitute
+    - create new OpVariable (with OpTypePointer)
+    - substitute OpLoad (with OpVariable and OpTypeImage)
+    - substitute
+11. OpDecorate
+12. Insert new instructions
+13. correct decorations
+14. prune no-ops
+15 write new header and code
+
+*/
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperationVariant {
     Regular,
     Dref,
@@ -25,14 +52,14 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut new_spv = spv.clone();
 
     // 1. Find locations instructions we need
-    let mut first_op_deocrate_idx = None;
-
     let mut op_dref_operation_idxs = vec![];
     let mut op_sampled_operation_idxs = vec![];
     let mut op_sampled_image_idxs = vec![];
     let mut op_load_idxs = vec![];
     let mut op_variable_idxs = vec![];
     let mut op_decorate_idxs = vec![];
+    let mut op_type_image_idxs = vec![];
+    let mut op_type_pointer_idxs = vec![];
 
     let mut spv_idx = 0;
     while spv_idx < spv.len() {
@@ -58,19 +85,19 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             | SPV_INSTRUCTION_OP_IMAGE_GATHER
             | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_IMPLICIT_LOD
             | SPV_INSTRUCTION_OP_IMAGE_SPARSE_SAMPLE_EXPLICIT_LOD
-            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_GATHER => {
-                op_sampled_operation_idxs.push(spv_idx);
-            }
+            | SPV_INSTRUCTION_OP_IMAGE_SPARSE_GATHER => op_sampled_operation_idxs.push(spv_idx),
             SPV_INSTRUCTION_OP_VARIABLE => op_variable_idxs.push(spv_idx),
-            SPV_INSTRUCTION_OP_DECORATE => {
-                op_decorate_idxs.push(spv_idx);
-                first_op_deocrate_idx.get_or_insert(spv_idx);
-            }
+            SPV_INSTRUCTION_OP_DECORATE => op_decorate_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_TYPE_IMAGE => op_type_image_idxs.push(spv_idx),
+            SPV_INSTRUCTION_OP_TYPE_POINTER => op_type_pointer_idxs.push(spv_idx),
             _ => {}
         }
 
         spv_idx += word_count as usize;
     }
+
+    let first_op_deocrate_idx = op_decorate_idxs.first().copied();
+    let last_op_type_image = op_type_image_idxs.last().copied();
 
     // 2. Collect all the loaded sampled images of both operation types
     // Conveniently, the offset for this value is always +3 for all of these operations
@@ -110,7 +137,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
-    // 5. Find the images that mix operations
+    // 5. Find the images that mismatch operations
     let mut mixed_image_ids = HashMap::new();
     let mut image_id_to_loads = HashMap::new();
 
@@ -121,9 +148,12 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             OperationVariant::Regular => entry.0 = true,
             OperationVariant::Dref => {
                 entry.1 = true;
-                image_id_to_loads.entry(id).or_insert(vec![]).push(load_idx);
             }
         }
+        image_id_to_loads
+            .entry(id)
+            .or_insert(vec![])
+            .push((load_idx, ty));
     }
 
     let mixed_image_ids = mixed_image_ids
@@ -131,9 +161,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .filter_map(|(id, (uses_regular, uses_dref))| (uses_regular && uses_dref).then_some(id))
         .collect::<Vec<_>>();
 
-    // 5. Duplicate OpVariable with a new_id and patch old OpLoads
-    // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
-    // check that its result isn't used for both regular and dref operations!
+    // 6. Find the OpVariable of the mismatched images
     let patch_variable_idxs = op_variable_idxs
         .iter()
         .filter_map(|idx| {
@@ -141,20 +169,147 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             mixed_image_ids
                 .iter()
                 .find(|id| **id == result_id)
-                .map(|id| (idx, id))
+                .map(|_| idx)
         })
         .collect::<Vec<_>>();
 
+    // 7. Find OpTypePointer that resulted in OpVariable
+    let patch_variable_idxs = patch_variable_idxs.iter().map(|&&variable_idx| {
+        let type_pointer_id = spv[variable_idx + 1];
+        let maybe_tp_idx = op_type_pointer_idxs.iter().find(|&tp_idx| {
+            let tp_id = spv[tp_idx + 1];
+            type_pointer_id == tp_id
+        });
+        (variable_idx, maybe_tp_idx.copied())
+    });
+
+    // 8. Find OpTypeImage that resulted in OpTypePointer
+    //    We also want to create an complement OpTypeImage (depth=!depth) (without duplicates) and
+    //    a respective OpTypePointer and OpTypeSampledImage pair (also no duplicates).
+    let patch_variable_idxs = patch_variable_idxs
+        .map(|(variable_idx, tp_idx)| {
+            let variable_result_id = spv[variable_idx];
+            let image_type_id = if let Some(tp_idx) = tp_idx {
+                // type_image_id
+                spv[tp_idx + 3]
+            } else if let Some(load_idxs) = image_id_to_loads.get(&variable_result_id)
+                && let Some(&(load_idx, _)) = load_idxs.first()
+            {
+                // We don't have a type pointer, let's find the OpTypeImage via our original OpLoad!
+                // load_type_result_id
+                spv[load_idx + 1]
+            } else {
+                unreachable!("Our OpVariable image id should always point back to a OpLoad id");
+            };
+
+            // Grab the existing type image
+            let (ti_idx, ti_id) = op_type_image_idxs
+                .iter()
+                .find_map(|&ti_idx| {
+                    let result_id = spv[ti_idx + 1];
+                    (result_id == image_type_id).then_some((ti_idx, result_id))
+                })
+                .unwrap();
+
+            // Try to find an type image with the complement properties or (re-)create one
+            let ti_word_count = hiword(spv[ti_idx]) as usize;
+            let mut ti_complement = spv[ti_idx + 2..ti_idx + ti_word_count].to_vec();
+            let complement_ty = match ti_complement[2] {
+                0 | 2 => {
+                    ti_complement[2] = 1;
+                    OperationVariant::Dref
+                }
+                1 => {
+                    ti_complement[2] = 0;
+                    OperationVariant::Regular
+                }
+                _ => panic!("depth field on valid spv can only be 0, 1, or 2"),
+            };
+
+            let mut new_instructions = vec![];
+
+            let complement_ti_id = op_type_image_idxs.iter().find_map(|&idx| {
+                let word_count = hiword(spv[idx]) as usize;
+                let result_id = spv[idx + 1];
+                // To have a consistent instruction ordering, we white-out the existing OpTypeImage
+                if ti_complement == spv[idx + 2..idx + word_count] {
+                    for it in new_spv.iter_mut().skip(idx).take(word_count) {
+                        *it = encode_word(1, SPV_INSTRUCTION_OP_NOP);
+                    }
+                    Some(result_id)
+                } else {
+                    None
+                }
+            });
+            let complement_ti_id = {
+                let new_type_image_id = complement_ti_id.unwrap_or_else(|| {
+                    instruction_bound += 1;
+                    instruction_bound - 1
+                });
+                let mut new_instruction = vec![
+                    encode_word(
+                        (ti_complement.len() + 2) as u16,
+                        SPV_INSTRUCTION_OP_TYPE_IMAGE,
+                    ),
+                    new_type_image_id,
+                ];
+                new_instruction.append(&mut ti_complement);
+                drop(ti_complement);
+                new_instructions.append(&mut new_instruction);
+                new_type_image_id
+            };
+
+            // Try to find a type id for complement type image or create one
+            let complement_tp_id = op_type_pointer_idxs
+                .iter()
+                .find_map(|&idx| {
+                    let result_id = spv[idx + 1];
+                    let type_id = spv[idx + 3];
+                    (type_id == complement_ti_id).then_some(result_id)
+                })
+                .unwrap_or_else(|| {
+                    let new_type_pointer_id = instruction_bound;
+                    instruction_bound += 1;
+                    let mut new_instruction = vec![
+                        encode_word(4, SPV_INSTRUCTION_OP_TYPE_POINTER),
+                        new_type_pointer_id,
+                        SPV_STORAGE_CLASS_UNIFORM_CONSTANT,
+                        complement_ti_id,
+                    ];
+                    new_instructions.append(&mut new_instruction);
+                    new_type_pointer_id
+                });
+
+            instruction_inserts.push(InstructionInsert {
+                previous_spv_idx: ti_idx,
+                instruction: new_instructions,
+            });
+
+            (
+                variable_idx,
+                ti_id,
+                complement_tp_id,
+                complement_ti_id,
+                complement_ty,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // 5. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage
+    // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
+    // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
 
-    for (&variable_idx, &old_variable_id) in patch_variable_idxs {
-        let word_count = hiword(spv[variable_idx]);
-
+    for (variable_idx, original_ti_id, complement_tp_id, complement_ti_id, complement_ty) in
+        patch_variable_idxs
+    {
         // OpVariable
+        let word_count = hiword(spv[variable_idx]);
         let new_variable_id = instruction_bound;
         instruction_bound += 1;
         let mut new_variable = Vec::new();
         new_variable.extend_from_slice(&spv[variable_idx..variable_idx + word_count as usize]);
+        new_variable[1] = complement_tp_id;
         new_variable[2] = new_variable_id;
         instruction_inserts.push(InstructionInsert {
             previous_spv_idx: variable_idx,
@@ -167,9 +322,16 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         });
 
         // OpLoad
+        let old_variable_id = spv[variable_idx + 2];
         if let Some(op_load_idxs) = image_id_to_loads.get(&old_variable_id) {
-            for &op_load_idx in op_load_idxs {
-                new_spv[op_load_idx + 3] = new_variable_id
+            for &(op_load_idx, ty) in op_load_idxs {
+                if **ty == complement_ty {
+                    new_spv[op_load_idx + 1] = complement_ti_id;
+                    new_spv[op_load_idx + 3] = new_variable_id;
+                } else {
+                    new_spv[op_load_idx + 1] = original_ti_id;
+                    new_spv[op_load_idx + 3] = old_variable_id;
+                };
             }
         }
     }

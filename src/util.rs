@@ -1,10 +1,10 @@
 use super::*;
 
-mod decorate;
 mod correct_decorate;
+mod decorate;
 
-pub use decorate::*;
 pub use correct_decorate::*;
+pub use decorate::*;
 
 pub fn hiword(value: u32) -> u16 {
     ((value >> 16) & 0xFFFF) as u16
@@ -29,7 +29,6 @@ pub fn insert_new_instructions(
         Word(WordInsert),
         Instruction(InstructionInsert),
     }
-
     let mut inserts = word_inserts
         .iter()
         .cloned()
@@ -78,7 +77,11 @@ pub fn prune_noops(new_spv: &mut Vec<u32>) {
     }
 }
 
-pub fn fuse_final(mut spv_header: Vec<u32>, mut new_spv: Vec<u32>, new_instruction_bound: u32) -> Vec<u32> {
+pub fn fuse_final(
+    mut spv_header: Vec<u32>,
+    mut new_spv: Vec<u32>,
+    new_instruction_bound: u32,
+) -> Vec<u32> {
     spv_header[SPV_HEADER_INSTRUCTION_BOUND_OFFSET] = new_instruction_bound;
     let mut out_spv = spv_header;
     out_spv.append(&mut new_spv);
