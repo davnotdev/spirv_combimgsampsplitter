@@ -166,64 +166,31 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .filter_map(filter_map_mixed_image_ids_for_access)
         .collect::<Vec<_>>();
 
-    // 7. Find OpFunction of OpFunctionParameter by tracing backwards
-    let patch_function_idxs = patch_function_parameter_idxs
-        .iter()
-        .map(|&idx| {
-            let mut spv_idx = idx;
-            let mut param_idx = 0;
-            loop {
-                let op = spv[spv_idx];
-                let word_count = hiword(op);
-                let instruction = loword(op);
-                match instruction {
-                    SPV_INSTRUCTION_OP_FUNCTION_PARAMTER => {
-                        spv_idx -= word_count as usize;
-                        param_idx += 1;
-                    }
-                    SPV_INSTRUCTION_OP_FUNCTION => return (spv_idx, param_idx),
-                    _ => panic!(
-                        "Expected OpFunction or OpFunctionParameter, got {}",
-                        instruction
-                    ),
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
     // 8. Find the OpVariable that eventually reaches OpFunctionCall of our OpFunctions
     // Because functions may be deeply nested, we'll have to account for other OpFunctionCalls
-    let function_call_trace_argument_to_variable = |argument_id: u32| -> Option<usize> {
-        // TODO: The worse part is that there can be other types of functions too!
-        todo!()
-        // op_variable_idxs
-        //     .iter()
-        //     .find(|&&idx| spv[idx + 2] == argument_id)
-        //     .or(op_function_call_idxs
-        //         .iter()
-        //         .find(|&&idx| spv[idx + 2] == argument_id).map(|&&idx|));
-        // None
-    };
-
-    let function_variable_idxs = patch_function_idxs.iter().filter_map(|&(idx, param_idx)| {
-        let result_id = spv[idx + 2];
-        op_function_call_idxs
-            .iter()
-            .find(|&&idx| {
-                let function_id = spv[idx + 3];
-                function_id == result_id
-            })
-            .and_then(|idx| {
-                let argument_id = spv[idx + 4 + param_idx];
-                function_call_trace_argument_to_variable(argument_id)
-            })
-    });
+    let a = patch_function_parameter_idxs
+        .iter()
+        .map(|&idx| {
+            let mut traced_function_calls = vec![];
+            let entry = get_function_from_parameter(&spv, idx);
+            let variables =
+                trace_function_argument_to_variables(TraceFunctionArgumentToVariablesIn {
+                    spv: &spv,
+                    op_variable_idxs: &op_variable_idxs,
+                    op_function_parameter_idxs: &op_function_parameter_idxs,
+                    op_function_call_idxs: &op_function_call_idxs,
+                    entry,
+                    traced_function_call_idxs: &mut traced_function_calls,
+                });
+        })
+        .collect::<Vec<_>>();
+    todo!();
 
     let patch_variable_idxs = patch_variable_idxs
         .iter()
         .copied()
-        .map(|idx| (idx, LoadType::Variable))
-        .chain(function_variable_idxs.map(|idx| (idx, LoadType::FunctionArgument)));
+        .map(|idx| (idx, LoadType::Variable));
+    // .chain(function_variable_idxs.map(|idx| (idx, LoadType::FunctionArgument)));
 
     // 7. Find OpTypePointer that resulted in OpVariable
     let patch_variable_idxs = patch_variable_idxs.map(|(variable_idx, lty)| {
@@ -348,6 +315,10 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
+    // TODO: Patch OpTypeFunction to include complement image
+    // TODO: Patch OpFunctionParameter to include complement image
+    // map result_id =>
+
     // 9. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage
     // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
     // check that its result isn't used for both regular and dref operations!
@@ -400,9 +371,6 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         // NOTE: We did not patch in a new OpSampledImage and OpTypeSampledImage.
         // Thankfully, it seems that `spirv-val`, `naga`, nor `tint` seem to care.
     }
-
-    // TODO: Patch OpTypeFunction to include complement image
-    // TODO: Patch OpFunctionParameter to include complement image
 
     // 10. Insert new OpDecorate
     let DecorateOut {
