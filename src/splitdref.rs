@@ -25,7 +25,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     assert_eq!(magic_number, SPV_HEADER_MAGIC);
 
     let mut instruction_inserts: Vec<InstructionInsert> = vec![];
-    let word_inserts: Vec<WordInsert> = vec![];
+    let mut word_inserts: Vec<WordInsert> = vec![];
 
     let spv = spv.into_iter().skip(SPV_HEADER_LENGTH).collect::<Vec<_>>();
     let mut new_spv = spv.clone();
@@ -168,7 +168,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
     // 8. Find the OpVariable that eventually reaches OpFunctionCall of our OpFunctions
     // Because functions may be deeply nested, we'll have to account for other OpFunctionCalls
-    let a = patch_function_parameter_idxs
+    let function_patch_variables_with_calls = patch_function_parameter_idxs
         .iter()
         .map(|&idx| {
             let mut traced_function_calls = vec![];
@@ -179,21 +179,29 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     op_variable_idxs: &op_variable_idxs,
                     op_function_parameter_idxs: &op_function_parameter_idxs,
                     op_function_call_idxs: &op_function_call_idxs,
+                    parent_entry: None,
                     entry,
                     traced_function_call_idxs: &mut traced_function_calls,
                 });
+            (variables, traced_function_calls)
         })
         .collect::<Vec<_>>();
-    todo!();
 
-    let patch_variable_idxs = patch_variable_idxs
+    let mut patch_variable_idxs = patch_variable_idxs
         .iter()
         .copied()
-        .map(|idx| (idx, LoadType::Variable));
-    // .chain(function_variable_idxs.map(|idx| (idx, LoadType::FunctionArgument)));
+        .map(|idx| (idx, LoadType::Variable))
+        .collect::<Vec<_>>();
+
+    for (variables, _) in function_patch_variables_with_calls.iter() {
+        for variable in variables {
+            patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
+        }
+    }
+    // .chain(function_patch_variables_with_calls.iter().map(|(idx, _)| (idx, LoadType::FunctionArgument)));
 
     // 7. Find OpTypePointer that resulted in OpVariable
-    let patch_variable_idxs = patch_variable_idxs.map(|(variable_idx, lty)| {
+    let patch_variable_idxs = patch_variable_idxs.into_iter().map(|(variable_idx, lty)| {
         let type_pointer_id = spv[variable_idx + 1];
         let maybe_tp_idx = op_type_pointer_idxs.iter().find(|&tp_idx| {
             let tp_id = spv[tp_idx + 1];
@@ -323,6 +331,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
     // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
+    let mut patched_function_types = HashSet::new();
 
     for (variable_idx, lty, original_ti_id, complement_tp_id, complement_ti_id, complement_ty) in
         patch_variable_idxs
@@ -362,8 +371,80 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 }
             }
             LoadType::FunctionArgument => {
-                // TODO: Patch OpLoad to new FunctionArgument
-                todo!()
+                let old_variable_id = spv[variable_idx + 2];
+
+                let mut function_id_to_new_parameter_id = HashMap::new();
+
+                // Patch function types, definition parameter, and final loads
+                for (variables, calls) in function_patch_variables_with_calls.iter() {
+                    if variables.contains(&variable_idx) {
+                        for &call in calls.iter().rev() {
+                            if !patched_function_types.contains(&call) {
+                                // Patch function type signature and parameters
+                                let new_parameter_id = instruction_bound;
+                                instruction_bound += 1;
+                                patch_function_type(PatchFunctionTypeIn {
+                                    spv: &spv,
+                                    instruction_inserts: &mut instruction_inserts,
+                                    word_inserts: &mut word_inserts,
+                                    op_type_function_idxs: &op_type_function_idxs,
+                                    entry: &call.call_parameter,
+                                    new_type_id: complement_ti_id,
+                                    new_parameter_id,
+                                });
+
+                                // Use our new parameters to patch dependent OpLoads
+                                for load_idx in op_load_idxs.iter() {
+                                    let result_id = spv[load_idx + 2];
+                                    let ptr_id = spv[load_idx + 3];
+                                    let parameter_result_id =
+                                        spv[call.call_parameter.parameter_idx + 2];
+
+                                    // OPT: Someone else can come by and rearrange these silly data
+                                    // structures later.
+                                    if ptr_id == parameter_result_id {
+                                        let ty = loaded_image_ids
+                                            .iter()
+                                            .find_map(|&(id, ty)| (id == result_id).then_some(ty))
+                                            .unwrap();
+                                        if *ty == complement_ty {
+                                            new_spv[load_idx + 1] = complement_ti_id;
+                                            new_spv[load_idx + 3] = new_variable_id;
+                                        } else {
+                                            new_spv[load_idx + 1] = original_ti_id;
+                                            new_spv[load_idx + 3] = old_variable_id;
+                                        };
+                                    }
+                                }
+
+                                let function_id = spv[call.function_call_idx + 3];
+                                function_id_to_new_parameter_id
+                                    .insert(function_id, new_parameter_id);
+                                patched_function_types.insert(call);
+                            }
+                        }
+                    }
+                }
+
+                // Patch function calls that call other functions
+                for (variables, calls) in function_patch_variables_with_calls.iter() {
+                    if variables.contains(&variable_idx) {
+                        for &call in calls.iter().rev() {
+                            if let Some(parent_entry) = call.call_parent_parameter {
+                                let function_id = spv[parent_entry.function_idx + 2];
+                                word_inserts.push(WordInsert {
+                                    idx: call.function_call_idx
+                                        + 4
+                                        + call.call_parameter.parameter_instruction_idx,
+                                    word: *function_id_to_new_parameter_id
+                                        .get(&function_id)
+                                        .unwrap(),
+                                    head_idx: call.function_call_idx,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
 

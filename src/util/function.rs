@@ -1,13 +1,12 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParameterEntry {
     pub parameter_idx: usize,
     pub function_idx: usize,
     pub parameter_instruction_idx: usize,
 }
 
-// Given a vec of paramater indices, find the (parameter, function, parameter index)
 pub fn get_function_from_parameter(spv: &[u32], function_parameter_idx: usize) -> ParameterEntry {
     let mut spv_idx = function_parameter_idx;
     let mut param_idx = 0;
@@ -44,19 +43,19 @@ pub fn get_function_from_parameter(spv: &[u32], function_parameter_idx: usize) -
     }
 }
 
-// Given a parameter, function, and parameter index, patch OpTypeFunction, OpFunctionParameter
 pub struct PatchFunctionTypeIn<'a> {
-    spv: &'a [u32],
-    instruction_inserts: &'a mut Vec<InstructionInsert>,
-    word_inserts: &'a mut Vec<WordInsert>,
-    op_type_function_idxs: &'a [usize],
+    pub spv: &'a [u32],
+    pub instruction_inserts: &'a mut Vec<InstructionInsert>,
+    pub word_inserts: &'a mut Vec<WordInsert>,
+    pub op_type_function_idxs: &'a [usize],
 
-    entry: &'a ParameterEntry,
-    new_type_id: u32,
-    new_parameter_id: u32,
+    pub entry: &'a ParameterEntry,
+    pub new_type_id: u32,
+    pub new_parameter_id: u32,
 }
 
-fn patch_function_type(inputs: PatchFunctionTypeIn) {
+// Given a parameter entry, patch OpTypeFunction and OpFunctionParameter
+pub fn patch_function_type(inputs: PatchFunctionTypeIn) {
     let PatchFunctionTypeIn {
         spv,
         instruction_inserts,
@@ -89,16 +88,23 @@ fn patch_function_type(inputs: PatchFunctionTypeIn) {
     });
 }
 
-// Trace a function backwards to a OpVariable, returns variable index, and list of affected
-// (parameter, function, parameter index)
+// Trace a function backwards to a OpVariable, return variables and dependent function calls
 pub struct TraceFunctionArgumentToVariablesIn<'a> {
     pub spv: &'a [u32],
     pub op_variable_idxs: &'a [usize],
     pub op_function_parameter_idxs: &'a [usize],
     pub op_function_call_idxs: &'a [usize],
 
+    pub parent_entry: Option<ParameterEntry>,
     pub entry: ParameterEntry,
-    pub traced_function_call_idxs: &'a mut Vec<(usize, ParameterEntry)>,
+    pub traced_function_call_idxs: &'a mut Vec<TracedFunctionCall>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TracedFunctionCall {
+    pub function_call_idx: usize,
+    pub call_parameter: ParameterEntry,
+    pub call_parent_parameter: Option<ParameterEntry>,
 }
 
 pub fn trace_function_argument_to_variables(
@@ -109,6 +115,7 @@ pub fn trace_function_argument_to_variables(
         op_variable_idxs: _,
         op_function_parameter_idxs: _,
         op_function_call_idxs,
+        parent_entry,
         entry,
         traced_function_call_idxs: _,
     } = inputs;
@@ -117,7 +124,11 @@ pub fn trace_function_argument_to_variables(
     for idx in op_function_call_idxs.iter() {
         let function_id = spv[idx + 3];
         if function_id == spv[entry.function_idx + 2] {
-            inputs.traced_function_call_idxs.push((*idx, entry));
+            inputs.traced_function_call_idxs.push(TracedFunctionCall {
+                function_call_idx: *idx,
+                call_parameter: entry,
+                call_parent_parameter: parent_entry,
+            });
             let argument_id = spv[idx + 4 + entry.parameter_instruction_idx];
             if let Some(mut out_variables) =
                 trace_function_argument_to_variables_inner(&mut inputs, argument_id)
@@ -128,8 +139,6 @@ pub fn trace_function_argument_to_variables(
     }
 
     variables.dedup();
-    inputs.traced_function_call_idxs.dedup();
-
     variables
 }
 
@@ -141,7 +150,8 @@ fn trace_function_argument_to_variables_inner(
         spv,
         op_variable_idxs,
         op_function_call_idxs,
-        entry: _,
+        parent_entry: _,
+        entry: parent_entry,
         op_function_parameter_idxs,
         traced_function_call_idxs,
     } = inputs;
@@ -166,6 +176,7 @@ fn trace_function_argument_to_variables_inner(
                 op_variable_idxs,
                 op_function_parameter_idxs,
                 op_function_call_idxs,
+                parent_entry: Some(*parent_entry),
                 entry,
                 traced_function_call_idxs,
             },
