@@ -160,7 +160,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .filter_map(filter_map_mixed_image_ids_for_access)
         .collect::<Vec<_>>();
 
-    // 6. Find OpFunctionParameter of the mismatched images
+    // 7. Find OpFunctionParameter of the mismatched images
     let patch_function_parameter_idxs = op_function_parameter_idxs
         .iter()
         .filter_map(filter_map_mixed_image_ids_for_access)
@@ -179,7 +179,6 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     op_variable_idxs: &op_variable_idxs,
                     op_function_parameter_idxs: &op_function_parameter_idxs,
                     op_function_call_idxs: &op_function_call_idxs,
-                    parent_entry: None,
                     entry,
                     traced_function_call_idxs: &mut traced_function_calls,
                 });
@@ -198,9 +197,8 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
         }
     }
-    // .chain(function_patch_variables_with_calls.iter().map(|(idx, _)| (idx, LoadType::FunctionArgument)));
 
-    // 7. Find OpTypePointer that resulted in OpVariable
+    // 9. Find OpTypePointer that resulted in OpVariable
     let patch_variable_idxs = patch_variable_idxs.into_iter().map(|(variable_idx, lty)| {
         let type_pointer_id = spv[variable_idx + 1];
         let maybe_tp_idx = op_type_pointer_idxs.iter().find(|&tp_idx| {
@@ -210,7 +208,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         (variable_idx, lty, maybe_tp_idx.copied())
     });
 
-    // 8. Find OpTypeImage that resulted in OpTypePointer
+    // 9. Find OpTypeImage that resulted in OpTypePointer
     //    We also want to create an complement OpTypeImage (depth=!depth) (without duplicates) and
     //    a respective OpTypePointer and OpTypeSampledImage pair (also no duplicates).
     let patch_variable_idxs = patch_variable_idxs
@@ -323,15 +321,15 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
-    // TODO: Patch OpTypeFunction to include complement image
-    // TODO: Patch OpFunctionParameter to include complement image
-    // map result_id =>
-
-    // 9. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage
+    // 10. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage.
+    // Map new function arguments to the correct instructions.
     // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
     // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
+
+    // There may be a shared OpTypeFunction but not shared OpFunctionParameter
     let mut patched_function_types = HashSet::new();
+    let mut patched_function_parameters = HashSet::new();
 
     for (variable_idx, lty, original_ti_id, complement_tp_id, complement_ti_id, complement_ty) in
         patch_variable_idxs
@@ -373,13 +371,21 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
             LoadType::FunctionArgument => {
                 let old_variable_id = spv[variable_idx + 2];
 
-                let mut function_id_to_new_parameter_id = HashMap::new();
+                // TODO: This won't work for multiple parameters
+                let mut function_id_and_index_to_new_parameter_id = HashMap::new();
 
                 // Patch function types, definition parameter, and final loads
                 for (variables, calls) in function_patch_variables_with_calls.iter() {
                     if variables.contains(&variable_idx) {
                         for &call in calls.iter().rev() {
-                            if !patched_function_types.contains(&call) {
+                            if !patched_function_parameters.contains(&(
+                                call.call_parameter.parameter_instruction_idx,
+                                spv[call.call_parameter.function_idx + 2],
+                            )) {
+                                let duplicative_function_type = patched_function_types.contains(&(
+                                    call.call_parameter.parameter_instruction_idx,
+                                    spv[call.call_parameter.function_idx + 4],
+                                ));
                                 // Patch function type signature and parameters
                                 let new_parameter_id = instruction_bound;
                                 instruction_bound += 1;
@@ -388,8 +394,9 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                     instruction_inserts: &mut instruction_inserts,
                                     word_inserts: &mut word_inserts,
                                     op_type_function_idxs: &op_type_function_idxs,
+                                    patch_function_type: !duplicative_function_type,
                                     entry: &call.call_parameter,
-                                    new_type_id: complement_ti_id,
+                                    new_type_id: complement_tp_id,
                                     new_parameter_id,
                                 });
 
@@ -418,9 +425,18 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                 }
 
                                 let function_id = spv[call.function_call_idx + 3];
-                                function_id_to_new_parameter_id
-                                    .insert(function_id, new_parameter_id);
-                                patched_function_types.insert(call);
+                                function_id_and_index_to_new_parameter_id.insert(
+                                    (function_id, call.call_parameter.parameter_instruction_idx),
+                                    new_parameter_id,
+                                );
+                                patched_function_parameters.insert((
+                                    call.call_parameter.parameter_instruction_idx,
+                                    spv[call.call_parameter.function_idx + 2],
+                                ));
+                                patched_function_types.insert((
+                                    call.call_parameter.parameter_instruction_idx,
+                                    spv[call.call_parameter.function_idx + 4],
+                                ));
                             }
                         }
                     }
@@ -430,15 +446,27 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 for (variables, calls) in function_patch_variables_with_calls.iter() {
                     if variables.contains(&variable_idx) {
                         for &call in calls.iter().rev() {
-                            if let Some(parent_entry) = call.call_parent_parameter {
-                                let function_id = spv[parent_entry.function_idx + 2];
+                            let function_idx = get_function_index_of_instruction_index(
+                                &spv,
+                                call.function_call_idx,
+                            );
+                            let function_id = spv[function_idx + 2];
+                            if let Some(parameter_word) = function_id_and_index_to_new_parameter_id
+                                .get(&(function_id, call.call_parameter.parameter_instruction_idx))
+                            {
                                 word_inserts.push(WordInsert {
                                     idx: call.function_call_idx
                                         + 4
                                         + call.call_parameter.parameter_instruction_idx,
-                                    word: *function_id_to_new_parameter_id
-                                        .get(&function_id)
-                                        .unwrap(),
+                                    word: *parameter_word,
+                                    head_idx: call.function_call_idx,
+                                });
+                            } else {
+                                word_inserts.push(WordInsert {
+                                    idx: call.function_call_idx
+                                        + 4
+                                        + call.call_parameter.parameter_instruction_idx,
+                                    word: new_variable_id,
                                     head_idx: call.function_call_idx,
                                 });
                             }
@@ -453,7 +481,7 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         // Thankfully, it seems that `spirv-val`, `naga`, nor `tint` seem to care.
     }
 
-    // 10. Insert new OpDecorate
+    // 11. Insert new OpDecorate
     let DecorateOut {
         descriptor_sets_to_correct,
     } = util::decorate(DecorateIn {
@@ -464,18 +492,18 @@ pub fn dreftexturesplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         affected_variables: &affected_variables,
     });
 
-    // 11. Insert New Instructions
+    // 12. Insert New Instructions
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
-    // 12. Correct OpDecorate Bindings
+    // 13. Correct OpDecorate Bindings
     util::correct_decorate(CorrectDecorateIn {
         new_spv: &mut new_spv,
         descriptor_sets_to_correct,
     });
 
-    // 13. Remove Instructions that have been Whited Out.
+    // 14. Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);
 
-    // 14. Write New Header and New Code
+    // 15. Write New Header and New Code
     Ok(fuse_final(spv_header, new_spv, instruction_bound))
 }

@@ -43,12 +43,31 @@ pub fn get_function_from_parameter(spv: &[u32], function_parameter_idx: usize) -
     }
 }
 
+// NOTE: You will see this comment everywhere: Someone can find a better algorithm later.
+pub fn get_function_index_of_instruction_index(spv: &[u32], instruction_idx: usize) -> usize {
+    let mut spv_idx = 0;
+    let mut last_function_idx = 0;
+    while spv_idx < instruction_idx {
+        let op = spv[spv_idx];
+        let word_count = hiword(op);
+        let instruction = loword(op);
+
+        if instruction == SPV_INSTRUCTION_OP_FUNCTION {
+            last_function_idx = spv_idx
+        }
+        spv_idx += word_count as usize
+    }
+
+    last_function_idx
+}
+
 pub struct PatchFunctionTypeIn<'a> {
     pub spv: &'a [u32],
     pub instruction_inserts: &'a mut Vec<InstructionInsert>,
     pub word_inserts: &'a mut Vec<WordInsert>,
     pub op_type_function_idxs: &'a [usize],
 
+    pub patch_function_type: bool,
     pub entry: &'a ParameterEntry,
     pub new_type_id: u32,
     pub new_parameter_id: u32,
@@ -61,21 +80,24 @@ pub fn patch_function_type(inputs: PatchFunctionTypeIn) {
         instruction_inserts,
         word_inserts,
         op_type_function_idxs,
+        patch_function_type,
         entry,
         new_type_id,
         new_parameter_id,
     } = inputs;
 
-    let type_function_id = spv[entry.function_idx + 4];
-    if let Some(idx) = op_type_function_idxs.iter().find(|&&idx| {
-        let result_id = spv[idx + 1];
-        type_function_id == result_id
-    }) {
-        word_inserts.push(WordInsert {
-            idx: idx + 3 + entry.parameter_instruction_idx,
-            word: new_type_id,
-            head_idx: *idx,
-        });
+    if patch_function_type {
+        let type_function_id = spv[entry.function_idx + 4];
+        if let Some(idx) = op_type_function_idxs.iter().find(|&&idx| {
+            let result_id = spv[idx + 1];
+            type_function_id == result_id
+        }) {
+            word_inserts.push(WordInsert {
+                idx: idx + 3 + entry.parameter_instruction_idx,
+                word: new_type_id,
+                head_idx: *idx,
+            });
+        }
     }
 
     instruction_inserts.push(InstructionInsert {
@@ -95,7 +117,6 @@ pub struct TraceFunctionArgumentToVariablesIn<'a> {
     pub op_function_parameter_idxs: &'a [usize],
     pub op_function_call_idxs: &'a [usize],
 
-    pub parent_entry: Option<ParameterEntry>,
     pub entry: ParameterEntry,
     pub traced_function_call_idxs: &'a mut Vec<TracedFunctionCall>,
 }
@@ -104,7 +125,6 @@ pub struct TraceFunctionArgumentToVariablesIn<'a> {
 pub struct TracedFunctionCall {
     pub function_call_idx: usize,
     pub call_parameter: ParameterEntry,
-    pub call_parent_parameter: Option<ParameterEntry>,
 }
 
 pub fn trace_function_argument_to_variables(
@@ -115,7 +135,6 @@ pub fn trace_function_argument_to_variables(
         op_variable_idxs: _,
         op_function_parameter_idxs: _,
         op_function_call_idxs,
-        parent_entry,
         entry,
         traced_function_call_idxs: _,
     } = inputs;
@@ -127,7 +146,6 @@ pub fn trace_function_argument_to_variables(
             inputs.traced_function_call_idxs.push(TracedFunctionCall {
                 function_call_idx: *idx,
                 call_parameter: entry,
-                call_parent_parameter: parent_entry,
             });
             let argument_id = spv[idx + 4 + entry.parameter_instruction_idx];
             if let Some(mut out_variables) =
@@ -150,9 +168,8 @@ fn trace_function_argument_to_variables_inner(
         spv,
         op_variable_idxs,
         op_function_call_idxs,
-        parent_entry: _,
-        entry: parent_entry,
         op_function_parameter_idxs,
+        entry: _,
         traced_function_call_idxs,
     } = inputs;
 
@@ -176,7 +193,6 @@ fn trace_function_argument_to_variables_inner(
                 op_variable_idxs,
                 op_function_parameter_idxs,
                 op_function_call_idxs,
-                parent_entry: Some(*parent_entry),
                 entry,
                 traced_function_call_idxs,
             },
