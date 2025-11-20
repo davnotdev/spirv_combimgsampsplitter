@@ -17,7 +17,7 @@ fn main() {
 
     let out_spv = match mode.as_str() {
         "combimg" => spirv_combimgsampsplitter::combimgsampsplitter(&spv).unwrap(),
-        "dref" => spirv_combimgsampsplitter::dreftexturesplitter(&spv).unwrap(),
+        "dref" => spirv_combimgsampsplitter::drefsplitter(&spv).unwrap(),
         mode => {
             eprintln!("unknown mode {:?}", mode);
             process::exit(1)

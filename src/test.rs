@@ -1,4 +1,4 @@
-use super::{combimgsampsplitter, dreftexturesplitter, u8_slice_to_u32_vec, u32_slice_to_u8_vec};
+use super::{combimgsampsplitter, drefsplitter, u8_slice_to_u32_vec, u32_slice_to_u8_vec};
 use naga::{back, front, valid};
 
 #[macro_export]
@@ -55,23 +55,23 @@ test_with_spv_and_fn!(
 test_with_spv_and_fn!(
     splitdref_test,
     "./test/splitdref/test.spv",
-    dreftexturesplitter
+    drefsplitter
 );
 
 test_with_spv_and_fn!(
     splitdref_test_wrong_type_image,
     "./test/splitdref/test_wrong_type_image.spv",
-    dreftexturesplitter
+    drefsplitter
 );
 
 test_with_spv_and_fn!(
     splitdref_test_nested,
     "./test/splitdref/test_nested.spv",
-    dreftexturesplitter
+    drefsplitter
 );
 
 test_with_spv_and_fn!(
     splitdref_test_nested2,
     "./test/splitdref/test_nested2.spv",
-    dreftexturesplitter
+    drefsplitter
 );
