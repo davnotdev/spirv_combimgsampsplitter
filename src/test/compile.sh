@@ -12,5 +12,5 @@ glslc splitdref/test_sampler.frag -o splitdref/test_sampler.spv
 glslc splitdref/test_nested_sampler.frag -o splitdref/test_nested_sampler.spv
 glslc splitdref/test_nested2_sampler.frag -o splitdref/test_nested2_sampler.spv
 glslc splitdref/test_mixed_dref.frag -o splitdref/test_mixed_dref.spv
-
+glslc splitdref/test_hidden_dref.frag -o splitdref/test_hidden_dref.spv
 spirv-as splitdref/test_wrong_type_image.spvasm -o splitdref/test_wrong_type_image.spv
