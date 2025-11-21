@@ -482,7 +482,6 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 }
             }
             LoadType::FunctionArgument => {
-                let old_variable_id = spv[variable_idx + 2];
                 let mut function_id_and_index_to_new_parameter_id = HashMap::new();
 
                 // Patch function types, definition parameter, and final loads
@@ -529,11 +528,8 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                             .unwrap();
                                         if *ty == complement_ty {
                                             new_spv[load_idx + 1] = complement_ti_id;
-                                            new_spv[load_idx + 3] = new_variable_id;
-                                        } else {
-                                            new_spv[load_idx + 1] = original_ti_id;
-                                            new_spv[load_idx + 3] = old_variable_id;
-                                        };
+                                            new_spv[load_idx + 3] = new_parameter_id;
+                                        }
                                     }
                                 }
 
