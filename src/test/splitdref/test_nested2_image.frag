@@ -1,7 +1,7 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform sampler u_regular_sampler;  // Regular sampler
-layout(set = 0, binding = 1) uniform sampler u_comparison_sampler;  // Shadow map sampler
+layout(set = 0, binding = 0) uniform sampler u_regular_sampler;
+layout(set = 0, binding = 1) uniform sampler u_comparison_sampler;
 
 layout(set = 0, binding = 2) uniform texture2D u_mixed_texture;
 

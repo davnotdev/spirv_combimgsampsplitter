@@ -53,25 +53,38 @@ test_with_spv_and_fn!(
 );
 
 test_with_spv_and_fn!(
-    splitdref_test,
-    "./test/splitdref/test.spv",
-    drefsplitter
-);
-
-test_with_spv_and_fn!(
     splitdref_test_wrong_type_image,
     "./test/splitdref/test_wrong_type_image.spv",
     drefsplitter
 );
-
 test_with_spv_and_fn!(
-    splitdref_test_nested,
-    "./test/splitdref/test_nested.spv",
+    splitdref_test_image,
+    "./test/splitdref/test_image.spv",
+    drefsplitter
+);
+test_with_spv_and_fn!(
+    splitdref_test_nested_image,
+    "./test/splitdref/test_nested_image.spv",
+    drefsplitter
+);
+test_with_spv_and_fn!(
+    splitdref_test_nested2_image,
+    "./test/splitdref/test_nested2_image.spv",
+    drefsplitter
+);
+test_with_spv_and_fn!(
+    splitdref_test_sampler,
+    "./test/splitdref/test_sampler.spv",
+    drefsplitter
+);
+test_with_spv_and_fn!(
+    splitdref_test_nested_sampler,
+    "./test/splitdref/test_nested_sampler.spv",
+    drefsplitter
+);
+test_with_spv_and_fn!(
+    splitdref_test_nested2_sampler,
+    "./test/splitdref/test_nested2_sampler.spv",
     drefsplitter
 );
 
-test_with_spv_and_fn!(
-    splitdref_test_nested2,
-    "./test/splitdref/test_nested2.spv",
-    drefsplitter
-);

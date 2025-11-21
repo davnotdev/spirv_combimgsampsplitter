@@ -238,7 +238,13 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     entry,
                     traced_function_call_idxs: &mut traced_function_calls,
                 });
-            (variables, traced_function_calls)
+            (
+                variables
+                    .into_iter()
+                    .map(|v| idx.next(v))
+                    .collect::<Vec<_>>(),
+                traced_function_calls,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -250,8 +256,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
     for (variables, _) in function_patch_variables_with_calls.iter() {
         for variable in variables {
-            // TODO: WE NEED MORE ABSTRACTIONNN
-            // patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
+            patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
         }
     }
 
@@ -268,6 +273,9 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     // 9. Find OpTypeImage that resulted in OpTypePointer
     //    We also want to create an complement OpTypeImage (depth=!depth) (without duplicates) and
     //    a respective OpTypePointer ~~and OpTypeSampledImage pair~~ (also no duplicates).
+    let mut existing_type_pointers_from_type_image = HashMap::new();
+    let mut existing_type_images_from_complement_instruction = HashMap::new();
+
     let patch_variable_idxs = patch_variable_idxs
         .map(|(variable_idx, lty, tp_idx)| {
             match variable_idx {
@@ -326,45 +334,64 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
                     let mut new_instructions = vec![];
 
-                    let complement_ti_id = op_type_image_idxs.iter().find_map(|&idx| {
-                        let word_count = hiword(spv[idx]) as usize;
-                        let result_id = spv[idx + 1];
-                        // To have a consistent instruction ordering, we white-out the existing OpTypeImage
-                        if ti_complement == spv[idx + 2..idx + word_count] {
-                            for it in new_spv.iter_mut().skip(idx).take(word_count) {
-                                *it = encode_word(1, SPV_INSTRUCTION_OP_NOP);
+                    let complement_ti_id = existing_type_images_from_complement_instruction
+                        .get(&ti_complement)
+                        .copied()
+                        .or(op_type_image_idxs.iter().find_map(|&idx| {
+                            let word_count = hiword(spv[idx]) as usize;
+                            let result_id = spv[idx + 1];
+                            // To have a consistent instruction ordering, we white-out the existing OpTypeImage
+                            if ti_complement == spv[idx + 2..idx + word_count] {
+                                for it in new_spv.iter_mut().skip(idx).take(word_count) {
+                                    *it = encode_word(1, SPV_INSTRUCTION_OP_NOP);
+                                }
+                                Some(result_id)
+                            } else {
+                                None
                             }
-                            Some(result_id)
-                        } else {
-                            None
-                        }
-                    });
+                        }));
                     let complement_ti_id = {
                         let new_type_image_id = complement_ti_id.unwrap_or_else(|| {
                             instruction_bound += 1;
-                            instruction_bound - 1
+                            let new_type_image_id = instruction_bound - 1;
+                            existing_type_images_from_complement_instruction
+                                .insert(ti_complement.clone(), new_type_image_id);
+                            new_type_image_id
                         });
-                        let mut new_instruction = vec![
-                            encode_word(
-                                (ti_complement.len() + 2) as u16,
-                                SPV_INSTRUCTION_OP_TYPE_IMAGE,
-                            ),
-                            new_type_image_id,
-                        ];
-                        new_instruction.append(&mut ti_complement);
-                        drop(ti_complement);
-                        new_instructions.append(&mut new_instruction);
+                        if !existing_type_images_from_complement_instruction
+                            .contains_key(&ti_complement)
+                        {
+                            let mut new_instruction = vec![
+                                encode_word(
+                                    (ti_complement.len() + 2) as u16,
+                                    SPV_INSTRUCTION_OP_TYPE_IMAGE,
+                                ),
+                                new_type_image_id,
+                            ];
+                            existing_type_images_from_complement_instruction
+                                .insert(ti_complement.clone(), new_type_image_id);
+                            new_instruction.append(&mut ti_complement);
+                            drop(ti_complement);
+                            new_instructions.append(&mut new_instruction);
+                        }
                         new_type_image_id
                     };
 
                     // Try to find a type id for complement type image or create one
-                    let complement_tp_id = op_type_pointer_idxs
-                        .iter()
-                        .find_map(|&idx| {
+                    let complement_tp_id = existing_type_pointers_from_type_image
+                        .get(&complement_ti_id)
+                        .copied()
+                        .or(op_type_pointer_idxs.iter().find_map(|&idx| {
                             let result_id = spv[idx + 1];
                             let type_id = spv[idx + 3];
-                            (type_id == complement_ti_id).then_some(result_id)
-                        })
+                            if type_id == complement_ti_id {
+                                existing_type_pointers_from_type_image
+                                    .insert(complement_ti_id, result_id);
+                                Some(result_id)
+                            } else {
+                                None
+                            }
+                        }))
                         .unwrap_or_else(|| {
                             let new_type_pointer_id = instruction_bound;
                             instruction_bound += 1;
@@ -375,6 +402,8 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                 complement_ti_id,
                             ];
                             new_instructions.append(&mut new_instruction);
+                            existing_type_pointers_from_type_image
+                                .insert(complement_ti_id, new_type_pointer_id);
                             new_type_pointer_id
                         });
 
@@ -458,7 +487,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
                 // Patch function types, definition parameter, and final loads
                 for (variables, calls) in function_patch_variables_with_calls.iter() {
-                    if variables.contains(&variable_idx) {
+                    if variables.contains(&variable_idx_typed.next(variable_idx)) {
                         for &call in calls.iter().rev() {
                             if !patched_function_parameters.contains(&(
                                 call.call_parameter.parameter_instruction_idx,
@@ -528,7 +557,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
                 // Patch function calls that call other functions
                 for (variables, calls) in function_patch_variables_with_calls.iter() {
-                    if variables.contains(&variable_idx) {
+                    if variables.contains(&variable_idx_typed.next(variable_idx)) {
                         for &call in calls.iter().rev() {
                             let function_idx = get_function_index_of_instruction_index(
                                 &spv,

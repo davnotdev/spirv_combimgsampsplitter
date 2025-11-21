@@ -5,7 +5,7 @@
 ; Schema: 0
 
 ; This sample is identical to test.spv, but OpTypeImage with depth=1 does not exist.
-; This is valid SPIRV, so we should handle this case.
+; This is valid SPIRV, so we should test this case.
 
                OpCapability Shader
           %1 = OpExtInstImport "GLSL.std.450"
