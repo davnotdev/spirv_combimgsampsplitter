@@ -12,6 +12,12 @@ enum LoadType {
     FunctionArgument,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MixState {
+    Mixed,
+    PotentiallyMixed,
+}
+
 trait IsIndexOrId {}
 impl IsIndexOrId for u32 {}
 impl IsIndexOrId for usize {}
@@ -183,7 +189,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let mut mixed_object_ids = HashMap::new();
     let mut patch_object_id_to_loads = HashMap::new();
 
-    for (id, load_idx, ty) in object_ids {
+    for (id, load_idx, ty) in object_ids.iter().copied() {
         let entry = mixed_object_ids.entry(id).or_insert((false, false));
 
         match ty {
@@ -204,29 +210,39 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .collect::<Vec<_>>();
 
     // 6. Find the OpVariable of the mismatched images
-    let filter_map_mixed_object_ids_for_access = |idx: &usize| {
-        let result_id = spv[*idx + 2];
-        mixed_object_ids
-            .iter()
-            .find(|id| id.inner() == result_id)
-            .map(|id| id.next(*idx))
-    };
     let patch_variable_idxs = op_variable_idxs
         .iter()
-        .filter_map(filter_map_mixed_object_ids_for_access)
+        .filter_map(|idx: &usize| {
+            let result_id = spv[*idx + 2];
+            mixed_object_ids
+                .iter()
+                .find(|id| id.inner() == result_id)
+                .map(|id| id.next(*idx))
+        })
         .collect::<Vec<_>>();
 
-    // 7. Find OpFunctionParameter of the mismatched images
+    // 7. Find OpFunctionParameter of ~~the mismatched~~ ALL images operations
+    // Later, we can keep the ones that trace to mismatched global variables
     let patch_function_parameter_idxs = op_function_parameter_idxs
         .iter()
-        .filter_map(filter_map_mixed_object_ids_for_access)
+        .filter_map(|idx: &usize| {
+            let result_id = spv[*idx + 2];
+            mixed_object_ids
+                .iter()
+                .find_map(|id| {
+                    (id.inner() == result_id).then_some((id.next(*idx), MixState::Mixed))
+                })
+                .or(object_ids.iter().find_map(|(id, _, _)| {
+                    (id.inner() == result_id).then_some((id.next(*idx), MixState::PotentiallyMixed))
+                }))
+        })
         .collect::<Vec<_>>();
 
     // 8. Find the OpVariable that eventually reaches OpFunctionCall of our OpFunctions
     // Because functions may be deeply nested, we'll have to account for other OpFunctionCalls
     let function_patch_variables_with_calls = patch_function_parameter_idxs
         .iter()
-        .map(|&idx| {
+        .map(|&(idx, mix_state)| {
             let mut traced_function_calls = vec![];
             let entry = get_function_from_parameter(&spv, idx.inner());
             let variables =
@@ -244,7 +260,26 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     .map(|v| idx.next(v))
                     .collect::<Vec<_>>(),
                 traced_function_calls,
+                mix_state,
             )
+        })
+        .collect::<Vec<_>>();
+
+    // Filter out PotentiallyMixed parameters that don't relate to any Mixed function parameters
+    let function_patch_variables_with_calls = function_patch_variables_with_calls
+        .iter()
+        .cloned()
+        .filter_map(|(variables, calls, mix_state)| match mix_state {
+            MixState::Mixed => Some((variables, calls)),
+            MixState::PotentiallyMixed => function_patch_variables_with_calls
+                .iter()
+                .any(|(mixed_variables, _, mix_state)| {
+                    *mix_state == MixState::Mixed
+                        && mixed_variables
+                            .iter()
+                            .any(|va| variables.iter().any(|vb| va == vb))
+                })
+                .then_some((variables, calls)),
         })
         .collect::<Vec<_>>();
 
@@ -254,9 +289,13 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         .map(|idx| (idx, LoadType::Variable))
         .collect::<Vec<_>>();
 
+    let mut function_patch_variable_set = HashSet::new();
     for (variables, _) in function_patch_variables_with_calls.iter() {
         for variable in variables {
-            patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
+            if !function_patch_variable_set.contains(variable) {
+                patch_variable_idxs.push((*variable, LoadType::FunctionArgument));
+                function_patch_variable_set.insert(*variable);
+            }
         }
     }
 
@@ -270,7 +309,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         (variable_idx, lty, maybe_tp_idx.copied())
     });
 
-    // 9. Find OpTypeImage that resulted in OpTypePointer
+    // 10. Find OpTypeImage that resulted in OpTypePointer
     //    We also want to create an complement OpTypeImage (depth=!depth) (without duplicates) and
     //    a respective OpTypePointer ~~and OpTypeSampledImage pair~~ (also no duplicates).
     let mut existing_type_pointers_from_type_image = HashMap::new();
@@ -425,15 +464,19 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
-    // 10. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage.
+    // 11. New OpVariable with a new_id, patch old OpLoads, and new depth=1 OpTypeImage.
     // Map new function arguments to the correct instructions.
     // NOTE: GENERALLY, with glslc, each OpImage* will get its own OpLoad, so we don't need to
     // check that its result isn't used for both regular and dref operations!
     let mut affected_variables = Vec::new();
 
     // There may be a shared OpTypeFunction but not shared OpFunctionParameter
-    let mut patched_function_types = HashSet::new();
+    let mut patched_function_types = HashMap::new();
     let mut patched_function_parameters = HashSet::new();
+
+    // We may patch ourselves a new OpTypeFunction multiple times.
+    // Maps function type id and function index to our new type.
+    let mut defered_new_function_types: HashMap<(u32, usize), InstructionInsert> = HashMap::new();
 
     for (
         variable_idx_typed,
@@ -488,26 +531,105 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                 for (variables, calls) in function_patch_variables_with_calls.iter() {
                     if variables.contains(&variable_idx_typed.next(variable_idx)) {
                         for &call in calls.iter().rev() {
+                            let function_id = spv[call.call_parameter.function_idx + 2];
+                            let type_function_id = spv[call.call_parameter.function_idx + 4];
                             if !patched_function_parameters.contains(&(
                                 call.call_parameter.parameter_instruction_idx,
                                 spv[call.call_parameter.function_idx + 2],
                             )) {
-                                let duplicative_function_type = patched_function_types.contains(&(
-                                    call.call_parameter.parameter_instruction_idx,
-                                    spv[call.call_parameter.function_idx + 4],
-                                ));
-                                // Patch function type signature and parameters
+                                let Some(type_function_idx) =
+                                    op_type_function_idxs.iter().find(|&&idx| {
+                                        let result_id = spv[idx + 1];
+                                        type_function_id == result_id
+                                    })
+                                else {
+                                    panic!(
+                                        "OpTypeFunction does not exist for function {}, type {}",
+                                        function_id, type_function_id
+                                    );
+                                };
+
+                                // To allow multiple patching we can either patch by taking
+                                // an instruction directly from the code, or by patching a
+                                // function we have already began
+                                // We save patching the function's type for later in case of
+                                // duplicate OpTypeFunction
+                                {
+                                    let (new_type_function_id, type_instruction_type_info) =
+                                        if let Some(new_function_type) = defered_new_function_types
+                                            .get_mut(&(
+                                                type_function_id,
+                                                call.call_parameter.function_idx,
+                                            ))
+                                        {
+                                            new_function_type.instruction.insert(
+                                                3 + call.call_parameter.parameter_instruction_idx
+                                                    + 1
+                                                    + 1,
+                                                complement_tp_id,
+                                            );
+                                            new_function_type.instruction[0] = encode_word(
+                                                new_function_type.instruction.len() as u16,
+                                                SPV_INSTRUCTION_OP_TYPE_FUNCTION,
+                                            );
+                                            (
+                                                new_function_type.instruction[1],
+                                                new_function_type.instruction[2..].to_vec(),
+                                            )
+                                        } else {
+                                            let new_function_type_id = instruction_bound;
+                                            instruction_bound += 1;
+
+                                            let word_count = hiword(spv[*type_function_idx]);
+                                            let mut type_function = Vec::new();
+                                            type_function.extend_from_slice(
+                                                &spv[*type_function_idx
+                                                    ..*type_function_idx + word_count as usize],
+                                            );
+                                            type_function[0] = encode_word(
+                                                word_count + 1,
+                                                SPV_INSTRUCTION_OP_TYPE_FUNCTION,
+                                            );
+                                            type_function[1] = new_function_type_id;
+                                            type_function.insert(
+                                                3 + call.call_parameter.parameter_instruction_idx
+                                                    + 1,
+                                                complement_tp_id,
+                                            );
+
+                                            let type_instruction_type_info =
+                                                type_function[2..].to_vec();
+
+                                            defered_new_function_types.insert(
+                                                (
+                                                    type_function_id,
+                                                    call.call_parameter.function_idx,
+                                                ),
+                                                InstructionInsert {
+                                                    previous_spv_idx: *type_function_idx,
+                                                    instruction: type_function,
+                                                },
+                                            );
+                                            (new_function_type_id, type_instruction_type_info)
+                                        };
+                                    let entry = patched_function_types
+                                        .entry(type_instruction_type_info)
+                                        .or_insert((new_type_function_id, vec![]));
+                                    entry
+                                        .1
+                                        .push((type_function_id, call.call_parameter.function_idx));
+                                }
+
+                                // Patch function parameter
                                 let new_parameter_id = instruction_bound;
                                 instruction_bound += 1;
-                                patch_function_type(PatchFunctionTypeIn {
-                                    spv: &spv,
-                                    instruction_inserts: &mut instruction_inserts,
-                                    word_inserts: &mut word_inserts,
-                                    op_type_function_idxs: &op_type_function_idxs,
-                                    patch_function_type: !duplicative_function_type,
-                                    entry: &call.call_parameter,
-                                    new_type_id: complement_tp_id,
-                                    new_parameter_id,
+                                instruction_inserts.push(InstructionInsert {
+                                    previous_spv_idx: call.call_parameter.parameter_idx,
+                                    instruction: vec![
+                                        encode_word(3, SPV_INSTRUCTION_OP_FUNCTION_PARAMTER),
+                                        complement_tp_id,
+                                        new_parameter_id,
+                                    ],
                                 });
 
                                 // Use our new parameters to patch dependent OpLoads
@@ -540,11 +662,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                 );
                                 patched_function_parameters.insert((
                                     call.call_parameter.parameter_instruction_idx,
-                                    spv[call.call_parameter.function_idx + 2],
-                                ));
-                                patched_function_types.insert((
-                                    call.call_parameter.parameter_instruction_idx,
-                                    spv[call.call_parameter.function_idx + 4],
+                                    function_id,
                                 ));
                             }
                         }
@@ -590,7 +708,22 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         // Thankfully, it seems that `spirv-val`, `naga`, nor `tint` seem to care.
     }
 
-    // 11. Insert new OpDecorate
+    // 12. Remove duplicate function types and patch them into OpFunction
+    for (_, (new_type_function_id, functions)) in patched_function_types.into_iter() {
+        for (idx, &(type_function_id, function_idx)) in functions.iter().enumerate() {
+            if idx != 0 {
+                defered_new_function_types.remove(&(type_function_id, function_idx));
+            }
+            new_spv[function_idx + 4] = new_type_function_id;
+        }
+    }
+
+    // We now insert our new function types
+    for (_, new_instruction) in defered_new_function_types {
+        instruction_inserts.push(new_instruction)
+    }
+
+    // 13. Insert new OpDecorate
     let DecorateOut {
         descriptor_sets_to_correct,
     } = util::decorate(DecorateIn {
@@ -601,18 +734,18 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         affected_variables: &affected_variables,
     });
 
-    // 12. Insert New Instructions
+    // 14. Insert New Instructions
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
-    // 13. Correct OpDecorate Bindings
+    // 15. Correct OpDecorate Bindings
     util::correct_decorate(CorrectDecorateIn {
         new_spv: &mut new_spv,
         descriptor_sets_to_correct,
     });
 
-    // 14. Remove Instructions that have been Whited Out.
+    // 16. Remove Instructions that have been Whited Out.
     prune_noops(&mut new_spv);
 
-    // 15. Write New Header and New Code
+    // 17. Write New Header and New Code
     Ok(fuse_final(spv_header, new_spv, instruction_bound))
 }

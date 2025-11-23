@@ -61,55 +61,6 @@ pub fn get_function_index_of_instruction_index(spv: &[u32], instruction_idx: usi
     last_function_idx
 }
 
-pub struct PatchFunctionTypeIn<'a> {
-    pub spv: &'a [u32],
-    pub instruction_inserts: &'a mut Vec<InstructionInsert>,
-    pub word_inserts: &'a mut Vec<WordInsert>,
-    pub op_type_function_idxs: &'a [usize],
-
-    pub patch_function_type: bool,
-    pub entry: &'a ParameterEntry,
-    pub new_type_id: u32,
-    pub new_parameter_id: u32,
-}
-
-// Given a parameter entry, patch OpTypeFunction and OpFunctionParameter
-pub fn patch_function_type(inputs: PatchFunctionTypeIn) {
-    let PatchFunctionTypeIn {
-        spv,
-        instruction_inserts,
-        word_inserts,
-        op_type_function_idxs,
-        patch_function_type,
-        entry,
-        new_type_id,
-        new_parameter_id,
-    } = inputs;
-
-    if patch_function_type {
-        let type_function_id = spv[entry.function_idx + 4];
-        if let Some(idx) = op_type_function_idxs.iter().find(|&&idx| {
-            let result_id = spv[idx + 1];
-            type_function_id == result_id
-        }) {
-            word_inserts.push(WordInsert {
-                idx: idx + 3 + entry.parameter_instruction_idx,
-                word: new_type_id,
-                head_idx: *idx,
-            });
-        }
-    }
-
-    instruction_inserts.push(InstructionInsert {
-        previous_spv_idx: entry.parameter_idx,
-        instruction: vec![
-            encode_word(3, SPV_INSTRUCTION_OP_FUNCTION_PARAMTER),
-            new_type_id,
-            new_parameter_id,
-        ],
-    });
-}
-
 // Trace a function backwards to a OpVariable, return variables and dependent function calls
 pub struct TraceFunctionArgumentToVariablesIn<'a> {
     pub spv: &'a [u32],

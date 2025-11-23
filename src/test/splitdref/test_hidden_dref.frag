@@ -17,8 +17,8 @@ void c(sampler s, texture2D t) {
     vec4 g2 = textureLod(sampler2D(t, s), vec2(0.0, 0.0), 0);
 }
 
-void d(sampler2D s, texture2D t) {
-    c(s, t)
+void d(sampler s, texture2D t) {
+    c(s, t);
 }
 
 void main() {
