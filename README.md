@@ -75,11 +75,11 @@ fs::write("out.spv", out_spv_bytes).unwrap();
 
 ```bash
 cargo install spirv_combimgsampsplitter
-spirv_combimgsampsplitter in.spv out.spv
+spirv_combimgsampsplitter combimg in.spv out.spv
 # or
 git clone https://github.com/davnotdev/spirv_combimgsampsplitter
 cd spirv_combimgsampsplitter
-cargo r -- in.spv out.spv
+cargo r -- combimg in.spv out.spv
 ```
 
 ## Moving Forward
