@@ -396,10 +396,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     let complement_ti_id = {
                         let new_type_image_id = complement_ti_id.unwrap_or_else(|| {
                             instruction_bound += 1;
-                            let new_type_image_id = instruction_bound - 1;
-                            existing_type_images_from_complement_instruction
-                                .insert(ti_complement.clone(), new_type_image_id);
-                            new_type_image_id
+                            instruction_bound - 1
                         });
                         if !existing_type_images_from_complement_instruction
                             .contains_key(&ti_complement)
@@ -739,6 +736,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     });
 
     // 14. Insert New Instructions
+    eprintln!("{:?}", instruction_inserts);
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
     // 15. Correct OpDecorate Bindings
