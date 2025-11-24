@@ -265,21 +265,25 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         })
         .collect::<Vec<_>>();
 
-    // Filter out PotentiallyMixed parameters that don't relate to any Mixed function parameters
+    // Filter out PotentiallyMixed parameters that don't relate to any Mixed function parameters or
+    // mixed variables
+    // TODO: This cannot handle mixing between different contexts, see `test_hidden3_dref.frag`1
     let function_patch_variables_with_calls = function_patch_variables_with_calls
         .iter()
         .cloned()
         .filter_map(|(variables, calls, mix_state)| match mix_state {
             MixState::Mixed => Some((variables, calls)),
-            MixState::PotentiallyMixed => function_patch_variables_with_calls
-                .iter()
-                .any(|(mixed_variables, _, mix_state)| {
+            MixState::PotentiallyMixed => (function_patch_variables_with_calls.iter().any(
+                |(mixed_variables, _, mix_state)| {
                     *mix_state == MixState::Mixed
                         && mixed_variables
                             .iter()
                             .any(|va| variables.iter().any(|vb| va == vb))
-                })
-                .then_some((variables, calls)),
+                },
+            ) || patch_variable_idxs
+                .iter()
+                .any(|idx| variables.iter().any(|va| va == idx)))
+            .then_some((variables, calls)),
         })
         .collect::<Vec<_>>();
 
