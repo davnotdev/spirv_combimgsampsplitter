@@ -81,3 +81,9 @@ git clone https://github.com/davnotdev/spirv_combimgsampsplitter
 cd spirv_combimgsampsplitter
 cargo r -- in.spv out.spv
 ```
+
+## Moving Forward
+
+Currently, we are working on comparison texture / sampler splitting. 
+The implementation is *usable*, though I would not recommend it.
+Be prepared for broken tests, a new repository / crate name, and a different API.
