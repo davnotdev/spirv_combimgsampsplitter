@@ -1,5 +1,19 @@
-use super::{combimgsampsplitter, u32_slice_to_u8_vec, u8_slice_to_u32_vec};
+use super::{combimgsampsplitter, u8_slice_to_u32_vec, u32_slice_to_u8_vec};
 use naga::{back, front, valid};
+
+#[macro_export]
+macro_rules! test_with_spv_and_fn {
+    ($NAME:ident, $SPV:expr, $FN:expr) => {
+        #[test]
+        fn $NAME() {
+            let spv = include_bytes!($SPV);
+            let spv = u8_slice_to_u32_vec(spv);
+            let out_spv = $FN(&spv).unwrap();
+            let out_spv = u32_slice_to_u8_vec(&out_spv);
+            try_spv_to_wgsl(&out_spv);
+        }
+    };
+}
 
 fn try_spv_to_wgsl(spv: &[u8]) {
     let module = front::spv::parse_u8_slice(spv, &front::spv::Options::default()).unwrap();
@@ -17,40 +31,80 @@ fn try_spv_to_wgsl(spv: &[u8]) {
     back::wgsl::write_string(&module, &info, back::wgsl::WriterFlags::all()).unwrap();
 }
 
-#[test]
-fn spv_test() {
-    let spv = include_bytes!("../test/test.spv");
-    let spv = u8_slice_to_u32_vec(spv);
-    let out_spv = combimgsampsplitter(&spv).unwrap();
-    let out_spv = u32_slice_to_u8_vec(&out_spv);
-    try_spv_to_wgsl(&out_spv);
-}
+test_with_spv_and_fn!(
+    splitcombined_test,
+    "./test/splitcombined/test.spv",
+    combimgsampsplitter
+);
+test_with_spv_and_fn!(
+    splitcombined_test_arrayed,
+    "./test/splitcombined/test_arrayed.spv",
+    combimgsampsplitter
+);
+test_with_spv_and_fn!(
+    splitcombined_test_nested,
+    "./test/splitcombined/test_nested.spv",
+    combimgsampsplitter
+);
+test_with_spv_and_fn!(
+    splitcombined_test_mixed,
+    "./test/splitcombined/test_mixed.spv",
+    combimgsampsplitter
+);
 
-#[test]
-fn spv_test_arrayed() {
-    let spv = include_bytes!("../test/test_arrayed.spv");
-    let spv = u8_slice_to_u32_vec(spv);
-    let out_spv = combimgsampsplitter(&spv).unwrap();
-    let out_spv = u32_slice_to_u8_vec(&out_spv);
-    try_spv_to_wgsl(&out_spv);
-}
-
-#[test]
-fn spv_test_nested() {
-    let spv = include_bytes!("../test/test_nested.spv");
-    let spv = u8_slice_to_u32_vec(spv);
-    let out_spv = combimgsampsplitter(&spv).unwrap();
-    let out_spv = u32_slice_to_u8_vec(&out_spv);
-
-    try_spv_to_wgsl(&out_spv);
-}
-
-#[test]
-fn spv_test_mixed() {
-    let spv = include_bytes!("../test/test_mixed.spv");
-    let spv = u8_slice_to_u32_vec(spv);
-    let out_spv = combimgsampsplitter(&spv).unwrap();
-    let out_spv = u32_slice_to_u8_vec(&out_spv);
-
-    try_spv_to_wgsl(&out_spv);
-}
+// Naga simply cannot handle this kind of POWER yet!
+// test_with_spv_and_fn!(
+//     splitdref_test_wrong_type_image,
+//     "./test/splitdref/test_wrong_type_image.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_image,
+//     "./test/splitdref/test_image.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_nested_image,
+//     "./test/splitdref/test_nested_image.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_nested2_image,
+//     "./test/splitdref/test_nested2_image.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_sampler,
+//     "./test/splitdref/test_sampler.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_nested_sampler,
+//     "./test/splitdref/test_nested_sampler.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_nested2_sampler,
+//     "./test/splitdref/test_nested2_sampler.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_nested2_sampler,
+//     "./test/splitdref/test_nested2_sampler.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_hidden_dref,
+//     "./test/splitdref/test_hidden_dref.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_hidden2_dref,
+//     "./test/splitdref/test_hidden2_dref.spv",
+//     drefsplitter
+// );
+// test_with_spv_and_fn!(
+//     splitdref_test_hidden3_dref,
+//     "./test/splitdref/test_hidden3_dref.spv",
+//     drefsplitter
+// );

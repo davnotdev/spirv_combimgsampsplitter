@@ -1,7 +1,10 @@
+[workspace]
+members = ["ffi"]
+
 [package]
 name = "spirv_combimgsampsplitter"
 version = "0.3.0"
-edition = "2021"
+edition = "2024"
 description = "SPIRV combined image sampler splitter for wgpu"
 repository = "https://github.com/davnotdev/spirv_combimgsampsplitter"
 homepage = "https://github.com/davnotdev/spirv_combimgsampsplitter"
