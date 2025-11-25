@@ -736,7 +736,6 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     });
 
     // 14. Insert New Instructions
-    eprintln!("{:?}", instruction_inserts);
     insert_new_instructions(&spv, &mut new_spv, &word_inserts, &instruction_inserts);
 
     // 15. Correct OpDecorate Bindings
