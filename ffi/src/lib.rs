@@ -1,7 +1,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::{ptr, slice};
-use spirv_combimgsampsplitter::{combimgsampsplitter, drefsplitter};
+use spirv_webgpu_transform::{combimgsampsplitter, drefsplitter};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn combimgsampsplitter_alloc(

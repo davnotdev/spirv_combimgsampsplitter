@@ -1,5 +1,15 @@
 # SPIRV Combined Image Sampler Splitter
 
+## Moving forward
+
+Currently, we are working on comparison texture / sampler splitting. 
+The implementation is *usable*, though I would not recommend it.
+Be prepared for broken tests, a new repository / crate name, and a different API.
+
+This repository is currently out of sync with the published crate!
+
+---
+
 [![Version Badge](https://img.shields.io/crates/v/spirv_combimgsampsplitter)](https://crates.io/crates/spirv_combimgsampsplitter)
 [![Docs Badge](https://img.shields.io/docsrs/spirv_combimgsampsplitter/latest)](https://docs.rs/spirv_combimgsampsplitter/latest/spirv_combimgsampsplitter/)
 [![License Badge](https://img.shields.io/crates/l/spirv_combimgsampsplitter)](LICENSE)
@@ -81,9 +91,3 @@ git clone https://github.com/davnotdev/spirv_combimgsampsplitter
 cd spirv_combimgsampsplitter
 cargo r -- combimg in.spv out.spv
 ```
-
-## Moving Forward
-
-Currently, we are working on comparison texture / sampler splitting. 
-The implementation is *usable*, though I would not recommend it.
-Be prepared for broken tests, a new repository / crate name, and a different API.
