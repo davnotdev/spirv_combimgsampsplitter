@@ -1,3 +1,5 @@
+use super::*;
+
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CorrectionType {
@@ -6,22 +8,17 @@ pub enum CorrectionType {
     SplitDrefComparison = 2,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct SetBinding(pub u32, pub u32);
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CorrectionBinding {
-    pub binding: u32,
     pub corrections: Vec<CorrectionType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CorrectionSet {
-    pub set: u32,
-    pub bindings: Vec<CorrectionBinding>,
+    pub bindings: HashMap<u32, CorrectionBinding>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct CorrectionMap {
-    pub sets: Vec<CorrectionSet>,
+    pub sets: HashMap<u32, CorrectionSet>,
 }

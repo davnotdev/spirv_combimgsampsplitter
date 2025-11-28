@@ -110,25 +110,21 @@ pub fn decorate(d_in: DecorateIn) -> DecorateOut {
         let mut all_descriptor_sets = all_descriptor_sets.into_iter().collect::<Vec<_>>();
         all_descriptor_sets.sort_by_key(|(_, (maybe_binding, _))| maybe_binding.unwrap());
 
-        let mut existing_sets: HashSet<u32> = HashSet::new();
         for (_, (binding, set)) in all_descriptor_sets {
             let set = set.unwrap();
             let binding = binding.unwrap();
 
-            if !existing_sets.contains(&set) {
-                new_corrections.sets.push(CorrectionSet {
-                    set,
-                    bindings: vec![],
-                });
-                existing_sets.insert(set);
-            }
-
-            new_corrections.sets[set as usize]
+            new_corrections
+                .sets
+                .entry(set)
+                .or_insert(CorrectionSet::default())
                 .bindings
-                .push(CorrectionBinding {
+                .insert(
                     binding,
-                    corrections: vec![],
-                });
+                    CorrectionBinding {
+                        corrections: vec![],
+                    },
+                );
         }
 
         *corrections = Some(new_corrections);
@@ -169,31 +165,32 @@ pub fn decorate(d_in: DecorateIn) -> DecorateOut {
             });
 
             // - Stamp our correction map with new variables
-            if let Some(bindings) = corrections
-                .as_mut()
-                .unwrap()
-                .sets
-                .get_mut(*descriptor_set as usize)
-            {
+            if let Some(bindings) = corrections.as_mut().unwrap().sets.get_mut(descriptor_set) {
                 // NOTE: We do expect this to be sorted by binding
-                // by the current init logic, this will be sorted
-                let input_bindings = old_corrections
+                let mut input_bindings = old_corrections
                     .as_ref()
                     .unwrap()
                     .sets
-                    .get(*descriptor_set as usize)
+                    .get(descriptor_set)
                     .unwrap()
                     .bindings
                     .iter()
-                    .map(|correction| correction.corrections.len() + 1)
+                    .collect::<Vec<_>>();
+                input_bindings.sort_by_key(|(k, _)| **k);
+                let input_bindings = input_bindings
+                    .iter()
+                    .map(|(binding, correction)| (binding, correction.corrections.len() + 1))
                     .collect::<Vec<_>>();
 
                 let mut my_binding = *binding as isize;
-                for (idx, &binding_count) in input_bindings.iter().enumerate() {
+                for &(binding, binding_count) in input_bindings.iter() {
                     if my_binding <= 0 {
                         // The leftover `my_binding` corresponds with the case of having to insert
                         // between or after previously inserted variables
-                        bindings.bindings[idx]
+                        bindings
+                            .bindings
+                            .get_mut(binding)
+                            .unwrap()
                             .corrections
                             .insert(my_binding.unsigned_abs(), *correction_type);
 
