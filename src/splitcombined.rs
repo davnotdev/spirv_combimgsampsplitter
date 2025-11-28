@@ -16,7 +16,10 @@ use variable::*;
 
 /// Perform the operation on a `Vec<u32>`.
 /// Use [u8_slice_to_u32_vec] to convert a `&[u8]` into a `Vec<u32>`
-pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
+pub fn combimgsampsplitter(
+    in_spv: &[u32],
+    corrections: &mut Option<CorrectionMap>,
+) -> Result<Vec<u32>, ()> {
     let spv = in_spv.to_owned();
 
     let mut instruction_bound = spv[SPV_HEADER_INSTRUCTION_BOUND_OFFSET];
@@ -195,10 +198,12 @@ pub fn combimgsampsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                     util::DecorationVariable {
                         original_res_id: *v_res_id,
                         new_res_id: *new_sampler_v_res_id,
+                        correction_type: CorrectionType::SplitCombined,
                     }
                 },
             )
             .collect::<Vec<_>>(),
+        corrections,
     });
 
     // 10. Insert New Instructions

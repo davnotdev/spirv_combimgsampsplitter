@@ -15,7 +15,7 @@ macro_rules! test_with_spv_and_fn {
         fn $NAME() {
             let spv = include_bytes!($SPV);
             let spv = u8_slice_to_u32_vec(spv);
-            let out_spv = $FN(&spv).unwrap();
+            let out_spv = $FN(&spv, &mut None).unwrap();
             try_spv_to_wgsl(&out_spv, $FLAGS);
         }
     };

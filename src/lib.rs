@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+mod correction;
 mod splitcombined;
 mod splitdref;
 mod spv;
@@ -11,6 +12,7 @@ mod test;
 use spv::*;
 use util::*;
 
+pub use correction::*;
 pub use splitcombined::*;
 pub use splitdref::*;
 

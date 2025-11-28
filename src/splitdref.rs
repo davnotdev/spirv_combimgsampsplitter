@@ -49,7 +49,10 @@ where
 
 /// Perform the operation on a `Vec<u32>`.
 /// Use [u8_slice_to_u32_vec] to convert a `&[u8]` into a `Vec<u32>`
-pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
+pub fn drefsplitter(
+    in_spv: &[u32],
+    corrections: &mut Option<CorrectionMap>,
+) -> Result<Vec<u32>, ()> {
     let spv = in_spv.to_owned();
 
     let mut instruction_bound = spv[SPV_HEADER_INSTRUCTION_BOUND_OFFSET];
@@ -137,7 +140,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
     let (Some(first_op_type_sampler_id), Some(first_op_type_pointer_sampler_id)) =
         (first_op_type_sampler_id, first_op_type_pointer_sampler_id)
     else {
-        return Ok(spv);
+        return Ok(in_spv.to_vec());
     };
 
     // 2. Collect all the loaded sampled images of both operation types
@@ -267,7 +270,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
 
     // Filter out PotentiallyMixed parameters that don't relate to any Mixed function parameters or
     // mixed variables
-    // TODO: This cannot handle mixing between different contexts, see `test_hidden3_dref.frag`1
+    // TODO: This cannot handle mixing between different contexts, see `test_hidden3_dref.frag`
     let function_patch_variables_with_calls = function_patch_variables_with_calls
         .iter()
         .cloned()
@@ -505,6 +508,10 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         affected_variables.push(util::DecorationVariable {
             original_res_id: spv[variable_idx + 2],
             new_res_id: new_variable_id,
+            correction_type: match complement_ty {
+                OperationVariant::Regular => CorrectionType::SplitDrefComparison,
+                OperationVariant::Dref => CorrectionType::SplitDrefRegular,
+            },
         });
 
         // OpLoad
@@ -640,7 +647,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
                                     let parameter_result_id =
                                         spv[call.call_parameter.parameter_idx + 2];
 
-                                    // OPT: Someone else can come by and rearrange these silly data
+                                    // TODO: OPT Someone else can come by and rearrange these silly data
                                     // structures later.
                                     if ptr_id == parameter_result_id {
                                         let ty = loaded_variable_ids
@@ -733,6 +740,7 @@ pub fn drefsplitter(in_spv: &[u32]) -> Result<Vec<u32>, ()> {
         first_op_deocrate_idx,
         op_decorate_idxs: &op_decorate_idxs,
         affected_variables: &affected_variables,
+        corrections,
     });
 
     // 14. Insert New Instructions
